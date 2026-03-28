@@ -1,32 +1,103 @@
-# Reglas de riesgo del portafolio
+# Reglas de riesgo — Validación autónoma del portafolio
 
-## Reglas inquebrantables (validar SIEMPRE antes de presentar un plan)
-1. Ninguna posición individual > 30% del capital
-2. Ninguna vertical > 50% del capital
-3. Reserva líquida mínima: 10% (stablecoins o efectivo)
-4. Capital en activos ilíquidos (lock > 30 días) < 20%
-5. Si dos activos tienen correlación > 0.7: advertir y sugerir reemplazo
-6. Risk score ponderado del portafolio < 7/10
+## Cuándo se ejecuta
+Este skill se ejecuta AUTOMÁTICAMENTE (sin que el usuario lo pida) en estos momentos:
+- Después de seleccionar las posiciones del plan (antes de presentar)
+- Cuando se agrega o modifica cualquier posición
+- Cuando el usuario reporta rendimiento real
+- En cada rebalanceo trimestral sugerido
 
-## Proceso de validación
-Para cada activo: ejecutar `calculate_risk_score` con volatility_30d, max_drawdown_12m, liquidity, platform_regulated, weight_in_portfolio_pct.
+## Reglas duras (violar cualquiera = recalcular automáticamente)
 
-Si risk score ponderado > 7/10:
-1. Reducir posición con mayor score
-2. Mover capital a posición más segura
-3. Re-calcular hasta cumplir
+### R1: Concentración individual
+```
+SI cualquier posición > 30% del capital:
+  → Reducir a 30% máximo
+  → Redistribuir excedente a la posición con menor weight
+  → Informar: "Reduje [activo] del X% al 30% porque una sola posición no debería ser más del 30% de tu portafolio. Moví el excedente a [otro activo]."
+```
 
-## Correlación
-Si el plan incluye VOO y QQQ juntos: ejecutar `calculate_correlation`. Históricamente correlación ~0.85 (problemática).
-Alternativas de menor correlación con VOO: BND (bonos, ~0.15), VWO (emergentes, ~0.62), GLD (oro, ~0.08).
+### R2: Concentración por vertical
+```
+SI cualquier vertical (equity/defi/forex/social) > 50% del capital:
+  → Reducir a 50% máximo
+  → Redistribuir a vertical con menor allocation
+  → Informar: "La vertical de [X] tenía el Y% del portafolio. La reduje al 50% para diversificar."
+```
 
-## Stress test
-SIEMPRE ejecutar `stress_test_portfolio` con "moderate_crash" antes de presentar. Mostrar:
-- "En un escenario de caída moderada, tu portafolio bajaría de $X a $Y"
-- "Tu ingreso de stablecoins ($Z/mes) NO se ve afectado"
+### R3: Reserva mínima
+```
+SI reserva líquida < 10% del capital:
+  → Aumentar reserva al 10%
+  → Reducir proporcionalmente todas las posiciones
+  → Informar: "Mantuve 10% en reserva líquida ($X) para oportunidades y emergencias."
+```
 
-## Exit triggers por tipo de activo
-- Acciones/ETFs: alerta si caen > 15% desde precio de compra
-- Cripto (no stablecoins): alerta si cae > 20%
-- DeFi yield: alerta si APY baja del 2%
-- DeFi TVL: alerta si TVL del protocolo cae > 30% en una semana
+### R4: Capital ilíquido
+```
+SI capital en activos con lock > 30 días > 20% del total:
+  → Reemplazar posiciones locked por alternativas flexibles
+  → Informar: "No más del 20% debería estar bloqueado. Cambié [X locked] por [Y flexible]."
+```
+
+### R5: Correlación
+```
+PARA cada par de activos en el plan:
+  SI ambos son de la misma clase (ej: dos ETFs de USA):
+    → Ejecutar calculate_correlation con precios 30 días
+    → SI correlación > 0.7:
+      → Reemplazar uno de los dos por un activo descorrelacionado
+      → Tabla de reemplazos:
+        VOO + QQQ (corr ~0.85) → reemplazar QQQ parcial con BND o VWO
+        ETH + SOL (corr ~0.75) → considerar, pero aceptable para DeFi
+        VOO + MSFT (corr ~0.70) → aceptable pero advertir
+```
+
+### R6: Risk score del portafolio
+```
+→ Calcular risk score ponderado: Σ(weight_i × risk_score_i)
+→ SI score > 7.0:
+  → Reducir posición con mayor risk score individual
+  → Mover capital a posición con menor risk score
+  → Recalcular hasta que score < 7.0
+```
+
+## Stress test obligatorio
+```
+ANTES de presentar cualquier plan:
+→ Ejecutar stress_test_portfolio con escenario "moderate_crash"
+→ Incluir en la presentación:
+  - "Si los mercados caen moderadamente, tu portafolio de $X bajaría a $Y (Z%)"
+  - "Tu ingreso de stablecoins ($W/mes) no se ve afectado"
+  - "En el peor escenario, manteniendo la inversión, históricamente se recupera en 12-24 meses"
+```
+
+## Exit triggers (auto-generar por posición)
+```
+PARA cada posición del plan, generar:
+
+SI vertical = equity:
+  → Alerta si cae > 15% desde precio de compra
+  → Pregunta sugerida: "Tu inversión en [X] bajó 15%. ¿Quieres mantener (históricamente se recupera), vender la mitad para proteger, o vender todo?"
+
+SI vertical = defi Y no es stablecoin:
+  → Alerta si cae > 20% desde precio de compra
+  → Alerta si APY del pool baja del 2%
+  → Alerta si TVL del protocolo cae > 30% en una semana
+
+SI vertical = forex:
+  → Stop loss definido en el plan (calculate_position_size)
+  → Take profit a 1:2 y 1:3 risk:reward
+  
+SI vertical = social (copy trading):
+  → Alerta si el trader copiado tiene drawdown > 20% en el mes
+  → Alerta si deja de operar por > 2 semanas
+```
+
+## Orden de ejecución
+1. Ejecutar `calculate_risk_score` para cada posición
+2. Verificar R1 a R6 — ajustar si viola
+3. Ejecutar `calculate_correlation` para pares relevantes — ajustar si viola
+4. Ejecutar `stress_test_portfolio` — incluir en presentación
+5. Generar exit triggers para cada posición
+6. Si algún ajuste se hizo: explicar al usuario qué cambió y por qué
