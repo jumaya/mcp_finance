@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+
+    "alphavantage": {
+      "command": "uvx",
+      "args": ["marketdata-mcp-server"],
+      "env": {
+        "ALPHA_VANTAGE_API_KEY": "TU_API_KEY_AQUI"
+      }
+    },
+
+    "coingecko": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.api.coingecko.com/sse"
+      ]
+    },
+
+    "defillama": {
+      "command": "npx",
+      "args": ["@mcp-dockmaster/mcp-server-defillama"]
+    },
+
+    "investment-calculators": {
+      "command": "uv",
+      "args": ["--directory", "/RUTA/A/agent-finance-mcp/mcp-server", "run", "server.py"]
+    }
+
+  }
+}

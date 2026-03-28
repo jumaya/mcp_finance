@@ -1,0 +1,10 @@
+[project]
+name = "investment-calculators"
+version = "0.1.0"
+description = "MCP server con calculadoras financieras: riesgo, impuestos CO, position sizing, portafolio"
+requires-python = ">=3.11"
+dependencies = ["fastmcp>=2.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
