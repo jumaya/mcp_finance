@@ -1,41 +1,78 @@
 {
-  "mcpServers": {
-
-    "alphavantage": {
-      "command": "uvx",
-      "args": ["marketdata-mcp-server"],
-      "env": {
-        "ALPHA_VANTAGE_API_KEY": "TU_API_KEY_AQUI"
-      }
-    },
-
-    "coingecko": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.api.coingecko.com/sse"
-      ]
-    },
-
-    "defillama": {
-      "command": "npx",
-      "args": ["@mcp-dockmaster/mcp-server-defillama"]
-    },
-
-    "etoro-mcp": {
-      "command": "node",
-      "args": ["C:\\Users\\TU_USUARIO\\Documents\\eToro-MCP\\dist\\index.js"],
-      "env": {
-        "ETORO_API_KEY": "TU_ETORO_API_KEY",
-        "ETORO_USER_KEY": "TU_ETORO_USER_KEY",
-        "ETORO_TRADING_MODE": "demo"
-      }
-    },
-
-    "investment-calculators": {
-      "command": "uv",
-      "args": ["--directory", "C:\\Users\\TU_USUARIO\\Documents\\mcp_finance\\mcp-server", "run", "server.py"]
+    "mcpServers": {
+        "alphavantage": {
+            "command": "uvx",
+            "args": [
+                "--from",
+                "marketdata-mcp-server",
+                "marketdata-mcp.exe",
+                "5UBHTY5HSYYRTOWH"
+            ]
+        },
+		"coingecko": {
+            "command": "npx",
+            "args": [
+                "mcp-remote",
+                "https://mcp.api.coingecko.com/sse"
+            ]
+        },
+        "defillama": {
+            "command": "npx",
+            "args": [
+                "@mcp-dockmaster/mcp-server-defillama"
+            ]
+        },
+        "etoro-mcp": {
+            "command": "node",
+            "args": [
+                "C:\\Users\\TU_USUARIO\\Documents\\eToro-MCP\\dist\\index.js"
+            ],
+            "env": {
+                "ETORO_API_KEY": "TU_ETORO_API_KEY",
+                "ETORO_USER_KEY": "TU_ETORO_USER_KEY",
+                "ETORO_TRADING_MODE": "demo"
+            }
+        },
+        "yahoo-finance": {
+            "command": "uvx",
+            "args": [
+                "yfmcp@latest"
+            ]
+        },
+        "tradingview": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "tradingview-mcp-server"
+            ]
+        },
+        "binance": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@snjyor/binance-mcp@latest"
+            ]
+        },
+        "metatrader": {
+            "command": "python",
+            "args": [
+                "-m",
+                "metatrader_mcp_server"
+            ],
+            "env": {
+                "MT5_LOGIN": "TU_MT5_LOGIN",
+                "MT5_PASSWORD": "TU_MT5_PASSWORD",
+                "MT5_SERVER": "TU_MT5_SERVER"
+            }
+        },
+        "investment-calculators": {
+            "command": "uv",
+            "args": [
+                "--directory",
+                "C:\\Users\\TU_USUARIO\\Documents\\mcp_finance\\mcp-server",
+                "run",
+                "server.py"
+            ]
+        }
     }
-
-  }
 }
