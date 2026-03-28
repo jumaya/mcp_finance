@@ -1,67 +1,79 @@
 # Agent Finance — Hybrid MCP Architecture
 
-Sistema de inversión para generar planes de ingresos pasivos personalizados.
-Arquitectura híbrida: MCP servers externos para datos + skills como Project Knowledge + MCP server propio de calculadoras.
+Sistema multi-agente de inversión para generar planes de ingresos pasivos personalizados.
+Arquitectura híbrida: 5 MCP servers para datos + 9 skills con lógica de decisión autónoma + MCP server propio de calculadoras.
 
 ## Estructura
 
 ```
-agent-finance-mcp/
-├── project-knowledge/          ← Skills (subir a Claude Desktop Project Knowledge)
-│   ├── system.md               ← Instrucciones del orquestador
-│   ├── equity_skill.md         ← Acciones y ETFs
-│   ├── defi_skill.md           ← Cripto, staking, DeFi
-│   ├── forex_skill.md          ← Forex y CFDs
-│   ├── risk_rules.md           ← Reglas de riesgo
-│   ├── tax_colombia.md         ← Reglas fiscales DIAN
-│   ├── guard_rules.md          ← Manejo inputs fuera de scope
-│   └── plan_template.md        ← Estructura del plan de salida
+mcp_finance/
+├── project-knowledge/          ← Skills v2 (subir a Claude Desktop Project Knowledge)
+│   ├── system.md               ← Agente orquestador: ciclo autónomo, árbol decisiones
+│   ├── equity_skill.md         ← Acciones/ETFs: selección por capital, correlación, RSI
+│   ├── defi_skill.md           ← Cripto/DeFi: estrategia por nivel, decisión de red
+│   ├── forex_skill.md          ← Forex/CFDs: barrera entrada, selección pares
+│   ├── social_skill.md         ← Copy trading: popular investors, eToro MCP
+│   ├── risk_rules.md           ← 6 reglas SI/ENTONCES + stress test + exit triggers
+│   ├── tax_colombia.md         ← DIAN: W-8BEN, umbrales, optimización fiscal
+│   ├── guard_rules.md          ← Clasificación inputs fuera de scope
+│   └── plan_template.md        ← 10 secciones obligatorias + checklist calidad
 ├── mcp-server/                 ← Tu MCP server propio (Python FastMCP)
 │   ├── server.py               ← 7 tools de cálculo financiero
 │   └── pyproject.toml
-├── claude_desktop_config.json  ← Config MCP servers para Claude Desktop
+├── claude_desktop_config.json  ← Config 5 MCP servers
 └── README.md
 ```
 
-## Setup (3 pasos)
+## MCP Servers (5)
 
-### 1. Tu MCP server de calculadoras
+| Server | Tipo | Tools | Datos que provee |
+|--------|------|-------|-----------------|
+| Alpha Vantage | Oficial | 116 | Acciones, ETFs, forex, indicadores técnicos |
+| CoinGecko | Oficial | ~30 | Cripto precios, market cap, pools DeFi |
+| DeFiLlama | Comunidad | ~7 | TVL protocolos, APY yields, stablecoins |
+| eToro MCP | Comunidad | 34 | Portafolio, popular investors, órdenes, DCA |
+| Investment Calculators | Propio | 7 | Risk score, tax CO, position size, allocation |
+
+## Setup
+
+### 1. Requisitos
+- Claude Desktop (plan Pro o Team)
+- Node.js (para CoinGecko, DeFiLlama, eToro MCP servers)
+- Python 3.11+ con `uv` (para tu MCP server)
+- Git
+
+### 2. API keys (gratuitas)
+- Alpha Vantage: alphavantage.co/support/#api-key
+- eToro: portal de desarrolladores de eToro
+
+### 3. Instalar MCP servers
+
 ```bash
-cd mcp-server
-uv sync
-uv run server.py  # Verificar que arranca
+# Tu server de calculadoras
+cd mcp-server && uv sync
+
+# eToro MCP (clonar y compilar)
+cd .. && git clone https://github.com/orkblutt/etoro-mcp.git eToro-MCP
+cd eToro-MCP && npm install && npm run build
 ```
 
-### 2. Configurar Claude Desktop
-Abre el config de Claude Desktop:
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+### 4. Configurar Claude Desktop
+Abrir `%APPDATA%\Claude\claude_desktop_config.json` (Windows)
+Copiar contenido de `claude_desktop_config.json` de este repo.
+Reemplazar: `TU_API_KEY_AQUI`, `TU_ETORO_API_KEY`, `TU_ETORO_USER_KEY`, `TU_USUARIO`.
+Reiniciar Claude Desktop.
 
-Copia el contenido de `claude_desktop_config.json`. Reemplaza:
-- `TU_API_KEY_AQUI` → tu key de Alpha Vantage (gratis en alphavantage.co)
-- `/RUTA/A/agent-finance-mcp/mcp-server` → ruta real en tu máquina
+### 5. Crear Project
+1. Claude Desktop → Projects → New Project → "Investment Advisor"
+2. Project Knowledge → Upload → los 9 archivos .md de `project-knowledge/`
+3. Chatear: "Tengo $500 y quiero generar ingresos pasivos"
 
-Reinicia Claude Desktop.
+## Verticales de inversión
 
-### 3. Crear Project en Claude Desktop
-1. Projects → New Project → nombre: "Investment Advisor"
-2. En Project Knowledge, sube los 8 archivos `.md` de `project-knowledge/`
-3. Empieza: "Tengo $500 y quiero generar ingresos pasivos"
-
-## Tools del MCP server
-
-| Tool | Qué hace |
-|------|----------|
-| `calculate_risk_score` | Risk score 1-10 con componentes desglosados |
-| `calculate_correlation` | Correlación de Pearson entre dos activos |
-| `stress_test_portfolio` | Simula escenarios de crisis |
-| `calculate_tax_impact` | Impacto fiscal Colombia (DIAN) |
-| `calculate_position_size` | Dimensionar posición Forex/CFDs |
-| `allocate_portfolio` | Asignación por vertical con proyecciones 12m |
-| `calculate_scenarios` | 3 escenarios (optimista/base/pesimista) |
-
-## Requisitos
-- Claude Desktop (con plan Pro o Team)
-- Node.js (para MCP servers de CoinGecko y DeFiLlama)
-- Python 3.11+ con `uv`
-- API key Alpha Vantage (gratis: alphavantage.co/support/#api-key)
+| Vertical | Skill | MCP Server | Rango APY | Riesgo |
+|----------|-------|-----------|-----------|--------|
+| ETFs indexados (VOO, QQQ, SCHD) | equity | Alpha Vantage | 8-12% | Moderado |
+| Lending stablecoins (Aave, Binance) | defi | DeFiLlama + CoinGecko | 3-8% | Bajo |
+| ETH staking (Lido, Binance) | defi | CoinGecko + DeFiLlama | 2.7-4% | Moderado |
+| Copy trading (eToro) | social | eToro MCP | 5-20% | Moderado |
+| Forex swing (EUR/USD, XAU/USD) | forex | Alpha Vantage | Variable | Alto |

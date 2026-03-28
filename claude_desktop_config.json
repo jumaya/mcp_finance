@@ -22,9 +22,19 @@
       "args": ["@mcp-dockmaster/mcp-server-defillama"]
     },
 
+    "etoro-mcp": {
+      "command": "node",
+      "args": ["C:\\Users\\TU_USUARIO\\Documents\\eToro-MCP\\dist\\index.js"],
+      "env": {
+        "ETORO_API_KEY": "TU_ETORO_API_KEY",
+        "ETORO_USER_KEY": "TU_ETORO_USER_KEY",
+        "ETORO_TRADING_MODE": "demo"
+      }
+    },
+
     "investment-calculators": {
       "command": "uv",
-      "args": ["--directory", "/RUTA/A/agent-finance-mcp/mcp-server", "run", "server.py"]
+      "args": ["--directory", "C:\\Users\\TU_USUARIO\\Documents\\mcp_finance\\mcp-server", "run", "server.py"]
     }
 
   }
