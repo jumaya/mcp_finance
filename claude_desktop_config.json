@@ -9,7 +9,7 @@
                 "5UBHTY5HSYYRTOWH"
             ]
         },
-		"coingecko": {
+        "coingecko": {
             "command": "npx",
             "args": [
                 "mcp-remote",
@@ -19,7 +19,8 @@
         "defillama": {
             "command": "npx",
             "args": [
-                "@mcp-dockmaster/mcp-server-defillama"
+                "-y",
+                "@nic0xflamel/defillama-mcp-server"
             ]
         },
         "etoro-mcp": {
@@ -54,25 +55,28 @@
             ]
         },
         "metatrader": {
-            "command": "python",
+            "command": "C:\\Users\\USUARIO\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\metatrader-mcp-server.exe",
             "args": [
-                "-m",
-                "metatrader_mcp_server"
-            ],
-            "env": {
-                "MT5_LOGIN": "TU_MT5_LOGIN",
-                "MT5_PASSWORD": "TU_MT5_PASSWORD",
-                "MT5_SERVER": "TU_MT5_SERVER"
-            }
+                "--login",
+                "105112117",
+                "--password",
+                "F*ArZ7Du",
+                "--server",
+                "MetaQuotes-Demo",
+                "--transport",
+                "stdio"
+            ]
         },
         "investment-calculators": {
             "command": "uv",
             "args": [
-                "--directory",
-                "C:\\Users\\TU_USUARIO\\Documents\\mcp_finance\\mcp-server",
                 "run",
+                "--no-project",
+                "--with",
+                "fastmcp",
                 "server.py"
-            ]
+            ],
+            "cwd": "C:\\Proyectos\\AgenteFinanzas\\mcp-server"
         }
     }
 }

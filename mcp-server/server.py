@@ -6,10 +6,7 @@ Ejecutar: uv run server.py
 import math
 from fastmcp import FastMCP
 
-mcp = FastMCP(
-    "Investment Calculators",
-    description="Calculadoras: riesgo, impuestos Colombia, position sizing, portafolio, escenarios",
-)
+mcp = FastMCP("Investment Calculators")
 
 
 @mcp.tool()
