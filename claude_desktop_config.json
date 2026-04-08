@@ -1,82 +1,82 @@
 {
-    "mcpServers": {
-        "alphavantage": {
-            "command": "uvx",
-            "args": [
-                "--from",
-                "marketdata-mcp-server",
-                "marketdata-mcp.exe",
-                "5UBHTY5HSYYRTOWH"
-            ]
-        },
-        "coingecko": {
-            "command": "npx",
-            "args": [
-                "mcp-remote",
-                "https://mcp.api.coingecko.com/sse"
-            ]
-        },
-        "defillama": {
-            "command": "npx",
-            "args": [
-                "-y",
-                "@nic0xflamel/defillama-mcp-server"
-            ]
-        },
-        "etoro-mcp": {
-            "command": "node",
-            "args": [
-                "C:\\Users\\TU_USUARIO\\Documents\\eToro-MCP\\dist\\index.js"
-            ],
-            "env": {
-                "ETORO_API_KEY": "TU_ETORO_API_KEY",
-                "ETORO_USER_KEY": "TU_ETORO_USER_KEY",
-                "ETORO_TRADING_MODE": "demo"
-            }
-        },
-        "yahoo-finance": {
-            "command": "uvx",
-            "args": [
-                "yfmcp@latest"
-            ]
-        },
-        "tradingview": {
-            "command": "npx",
-            "args": [
-                "-y",
-                "tradingview-mcp-server"
-            ]
-        },
-        "binance": {
-            "command": "npx",
-            "args": [
-                "-y",
-                "@snjyor/binance-mcp@latest"
-            ]
-        },
-        "metatrader": {
-            "command": "C:\\Users\\USUARIO\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\metatrader-mcp-server.exe",
-            "args": [
-                "--login",
-                "105112117",
-                "--password",
-                "F*ArZ7Du",
-                "--server",
-                "MetaQuotes-Demo",
-                "--transport",
-                "stdio"
-            ]
-        },
-        "investment-calculators": {
-            "command": "uv",
-            "args": [
-                "run",
-                "--no-project",
-                "--with",
-                "fastmcp",
-                "server.py"
-            ],
-            "cwd": "C:\\Proyectos\\AgenteFinanzas\\mcp-server"
-        }
+  "mcpServers": {
+    "alphavantage": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "marketdata-mcp-server",
+        "marketdata-mcp.exe",
+        "5UBHTY5HSYYRTOWH"
+      ]
+    },
+    "coingecko": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.api.coingecko.com/sse"
+      ]
+    },
+    "defillama": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@nic0xflamel/defillama-mcp-server"
+      ]
+    },
+    "yahoo-finance": {
+      "command": "uvx",
+      "args": [
+        "yfmcp@latest"
+      ]
+    },
+    "tradingview": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "tradingview-mcp-server"
+      ]
+    },
+	"binance": {
+      "command": "npx",
+      "args": ["binance-mcp-server"],
+      "env": {
+        "BINANCE_API_KEY": "sPZ0I5BdNMhnvk6w4JOLb3uZec66y3hlE4QOMzbVZNwVoOq8vU5PSU68YasezBJn",
+        "BINANCE_API_SECRET": "eWMQ1O59Hv7BknGKjHdDAsIa1kfOPXqI6Mdk9duY0THUIJ85J6n8vv4iwL6XOIaU",
+        "BINANCE_TESTNET": "false"
+      }
+    },
+    "metatrader": {
+      "command": "C:\\Users\\USUARIO\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\metatrader-mcp-server.exe",
+      "args": [
+        "--login",
+        "105112117",
+        "--password",
+        "F*ArZ7Du",
+        "--server",
+        "MetaQuotes-Demo",
+        "--transport",
+        "stdio"
+      ]
+    },
+    "investment-calculators": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--no-project",
+        "--with",
+        "fastmcp",
+        "C:\\Proyectos\\AgenteFinanzas\\mcp-server\\server.py"
+      ]
+    },
+	"etoro-mcp": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://api-portal.etoro.com/mcp"]
     }
+  },
+  "preferences": {
+    "coworkScheduledTasksEnabled": true,
+    "ccdScheduledTasksEnabled": true,
+    "sidebarMode": "chat",
+    "coworkWebSearchEnabled": true
+  }
 }
