@@ -1,65 +1,67 @@
-# Skill: Acciones y ETFs — v3
+# Skill: Acciones y ETFs — v4
 
 ## Cuándo se activa
-Paso 4 del orquestador cuando hay acciones o ETFs en el plan.
+Paso 4 del orquestador cuando hay acciones o ETFs.
 
-## Activos por nivel de riesgo
-
-### Riesgo ALTO (OBLIGATORIO usar esta lista)
+## Activos por riesgo
 ```
-Acciones de alto crecimiento:
-  NVDA, TSLA, AMD, COIN, MSTR, PLTR, SOFI, RIOT, MARA
-
-ETFs apalancados (solo para momentum, NO hold > 3 meses):
-  TQQQ (Nasdaq 3x), SOXL (Semiconductores 3x)
-
-PROHIBIDO: VOO, VT, SCHD, QQQ sin apalancamiento
+ALTO: NVDA, TSLA, AMD, COIN, MSTR, PLTR, SOFI, RIOT, MARA | ETFs: TQQQ, SOXL
+  PROHIBIDO: VOO, VT, SCHD, QQQ sin apalancamiento
+MODERADO: QQQ, XLK, AAPL, MSFT, GOOGL, AMZN
+BAJO: VOO, VT, SCHD
 ```
 
-### Riesgo MODERADO
+## Apalancamiento eToro CFDs
 ```
-ETFs sectoriales: QQQ, XLK, ARKK
-Blue-chips: AAPL, MSFT, GOOGL, AMZN
-```
-
-### Riesgo BAJO
-```
-Solo ETFs diversificados: VOO, VT, SCHD
-```
-
-## Apalancamiento en eToro
-```
-Para riesgo ALTO, sugerir CFD 2x en acciones de convicción:
-  - 2x en NVDA, TSLA, COIN → exposición real = doble del capital
-  - NUNCA 5x (riesgo de liquidación con capital pequeño)
-  - Ganancia +20% con 2x = +40% real
-  - Pérdida -20% con 2x = -40% real
-  - ADVERTIR siempre sobre el riesgo de liquidación
-```
-
-## Datos a consultar (MCP servers)
-```
-POR CADA acción:
-  Alpha Vantage → precio, RSI, MACD, SMA50, SMA200, P/E, EPS
-  Yahoo Finance → earnings date, analyst consensus
-  TradingView → señal técnica, screener de sector
+Riesgo ALTO → sugerir CFD 2x en acciones de convicción
+  - 2x: ganancia/pérdida se duplica
+  - NUNCA 5x con capital < $1000
+  
+COSTOS OVERNIGHT (incluir SIEMPRE en CFDs):
+  Fee diario ≈ monto × apalancamiento × 0.015%
+  Fee mensual ≈ fee_diario × 30
+  
+  Ejemplos:
+    $200 con 2x = $400 exposición → ~$1.80/mes overnight
+    $150 con 2x = $300 exposición → ~$1.35/mes overnight
+  
+  RESTAR del rendimiento neto:
+    Si TP1 es +25% en 3 meses = +$50
+    Overnight 3 meses = ~$5.40
+    Rendimiento neto real = +$44.60 (+22.3%)
+  
+  MENCIONAR en cada posición CFD:
+    "Costo overnight: ~$X.XX/mes. En 3 meses: ~$XX. Rendimiento neto ajustado: +XX%"
 ```
 
-## Cálculos obligatorios
+## Tool calls obligatorios POR CADA acción
 ```
-1. calculate_scenarios(monto, rendimiento, volatilidad, 0, meses)
-2. calculate_risk_score(volatilidad, drawdown, liquidez, apalancado, peso)
-3. calculate_tax_impact("equity_capital_gain", ganancia_estimada)
-4. SI 2+ acciones: calculate_correlation entre ellas
+1. Alpha Vantage → precio, RSI, MACD, SMA50, SMA200, P/E
+2. Yahoo Finance → earnings date, analyst consensus
+3. TradingView → señal técnica del sector
+4. calculate_scenarios(monto, rendimiento, volatilidad, 0, meses)
+5. calculate_risk_score(volatilidad, drawdown, liquidez, apalancado, peso)
+6. calculate_tax_impact("equity_capital_gain", ganancia_estimada)
 ```
 
-## Formato de recomendación
+## Correlación (OBLIGATORIO si 2+ acciones)
 ```
-TICKER | Plataforma | Tipo (Spot/CFD 2x)
-Capital: $XX (XX%) | Precio: $XXX | RSI: XX
-TESIS: [específica, no genérica]
-CATALIZADOR: [evento + fecha]
-RIESGO: [específico + precio]
-Entrada: $XXX | SL: $XXX | TP1: $XXX | TP2: $XXX
-Escenarios: 🟢+XX% 🟡+XX% 🔴-XX%
+EJECUTAR calculate_correlation entre acciones del portafolio.
+Pares a verificar especialmente:
+  COIN ↔ BTC/ETH: correlación ~0.8 (COIN es proxy de cripto)
+  NVDA ↔ AMD: correlación ~0.7 (mismo sector)
+  TSLA ↔ mercado general: beta 2.3 amplifica todo
+
+SI correlación > 0.7:
+  → ADVERTIR: "Estas posiciones se mueven juntas. En un crash, ambas caen simultáneamente"
+  → SUGERIR: diversificar con un activo menos correlacionado
+```
+
+## Earnings como catalizador
+```
+SI hay earnings próximos (< 30 días) de una acción en el portafolio:
+  → INCLUIR la fecha en el cronograma semanal
+  → Ejemplo: "Semana 3: COIN earnings 7 mayo — evaluar posición antes"
+  → Sugerir: reducir posición 25% antes del earnings si ya tiene ganancia
+  → O: mantener si la tesis incluye el earnings como catalizador
 ```

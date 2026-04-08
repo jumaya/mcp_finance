@@ -1,79 +1,47 @@
-# Template del plan de inversión — v3
+# Template del plan de inversión — v4
 
-## Regla de rendimiento mínimo por perfil
+## Rendimiento mínimo por perfil (escenario BASE, 6 meses)
 ```
-El plan DEBE proyectar al menos este rendimiento en escenario BASE a 6 meses:
-  Riesgo bajo: +4% a +8%
-  Riesgo moderado: +10% a +20%
-  Riesgo alto: +30% a +60%
-  Riesgo extremo: +40% a +200%
-
-SI el rendimiento proyectado está DEBAJO del mínimo:
-  → Aumentar activos volátiles
-  → Agregar apalancamiento 2x
-  → Reducir stablecoins/reserva
-  → Incluir copy trading agresivo
+Bajo: +4-8% | Moderado: +10-20% | Alto: +30-60% | Extremo: +40-200%
+SI rendimiento proyectado < mínimo → recalibrar activos
 ```
 
-## Límite de posiciones defensivas por perfil
+## Límite defensivo (stablecoins + reserva + ETFs broad)
 ```
-Defensivo = USDC lending + reserva + stablecoins + ETFs broad (VOO/VT)
-
-  Riesgo bajo: hasta 60% defensivo
-  Riesgo moderado: hasta 30%
-  Riesgo alto: MÁXIMO 10%
-  Riesgo extremo: MÁXIMO 5%
+Bajo: ≤60% | Moderado: ≤30% | Alto: ≤10% | Extremo: ≤5%
 ```
 
-## Secciones obligatorias (10)
+## Secciones obligatorias (12)
 
-### 1. Contexto de mercado
-Datos reales de MCP. RSI S&P 500, BTC precio/dominancia, narrativas, conclusión.
+1. **Contexto mercado** — datos reales con fuente MCP
+2. **Asimetrías** — oportunidades detectadas con datos
+3. **Popular investors** — del eToro MCP + copy trading como posición
+4. **Posiciones con tesis** — ticker, plataforma, tipo, monto, RSI, tesis, catalizador+fecha, riesgo, entrada, SL, TP1, TP2
+5. **Cálculos reales** — escenarios (via calculate_scenarios), risk score (via calculate_risk_score), tax (via calculate_tax_impact)
+6. **Correlación** — via calculate_correlation entre posiciones principales
+7. **Costos totales** — overnight fees CFDs + trading fees + spread P2P
+8. **Stress test** — via stress_test_portfolio con crash -20% y -40%
+9. **Cronograma Mes 1** — semana a semana, incluir earnings dates
+10. **Escenarios 3M y 6M** — tablas con razones específicas
+11. **Impacto fiscal** — Colombia/DIAN por tipo de activo
+12. **Seguimiento + disclaimers** — calendario revisión + disclaimers
 
-### 2. Asimetrías detectadas
-Del Paso 2 del orquestador. Oportunidades que el mercado no ha corregido.
-
-### 3. Popular investors (si usa eToro)
-Del Paso 3. Nombres reales, rendimiento, risk score.
-
-### 4. Posiciones con tesis completa
-Por cada posición: ticker, plataforma, monto, tipo, precio actual, RSI, tesis (no genérica), catalizador con fecha, riesgo específico, entrada, SL, TP1, TP2, escenarios, risk score, impuesto CO.
-
-### 5. Distribución por vertical
-Tabla con % por categoría. Verificar que defensivo no exceda el límite.
-
-### 6. Escenarios a 3 y 6 meses
-Tablas separadas con: escenario, rendimiento mensual, capital final, probabilidad, razón específica.
-
-### 7. Cronograma semanal Mes 1
-Semana 1: setup + primeras compras (día por día)
-Semana 2: revisión y ajustes
-Semana 3: refuerzo o nuevas entradas
-Semana 4: evaluación y rebalanceo
-
-### 8. Stress test
-Crash moderado (-20%) y severo (-40%) con valores en dólares por posición.
-
-### 9. Impacto fiscal Colombia
-calculate_tax_impact por tipo de activo. Montos estimados.
-
-### 10. Seguimiento + Disclaimers
-Calendario de revisión (tracking_skill.md). Disclaimers obligatorios.
-
-## Checklist de calidad (verificar ANTES de presentar)
+## Checklist calidad (verificar ANTES de presentar)
 ```
-□ ¿Todos los precios son reales (via MCP)?
-□ ¿Cada posición tiene tesis específica (no genérica)?
-□ ¿Cada posición tiene catalizador con fecha?
-□ ¿Cada posición tiene SL y TP?
-□ ¿Los escenarios tienen razones específicas?
-□ ¿El % defensivo no excede el límite del perfil?
-□ ¿El rendimiento base cumple el mínimo del perfil?
-□ ¿Se ejecutó stress_test?
-□ ¿Se calculó tax_impact?
-□ ¿Se incluyó copy trading (si eToro)?
-□ ¿Se consultaron popular investors reales?
-□ ¿El contexto de mercado está al inicio?
-□ ¿NO hay activos conservadores para perfil agresivo?
-□ ¿Hay checkpoints ✅ visibles después de cada paso?
+□ Precios reales via MCP (no inventados)
+□ Tesis específica por posición (no genérica)
+□ Catalizador con fecha por posición
+□ SL y TP por posición
+□ Escenarios via calculate_scenarios (no inventados)
+□ Risk score via calculate_risk_score (no inventado)
+□ Tax via calculate_tax_impact (no inventado)
+□ Correlación via calculate_correlation (no inventada)
+□ Stress test via stress_test_portfolio (no inventado)
+□ Copy trading incluido como posición (si eToro)
+□ Overnight fees calculados (si CFDs)
+□ Earnings dates en cronograma
+□ % defensivo ≤ límite del perfil
+□ Rendimiento base ≥ mínimo del perfil
+□ Checkpoints ✅ visibles
+□ Disclaimers al final
 ```
