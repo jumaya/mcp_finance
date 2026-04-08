@@ -1,128 +1,128 @@
-# Skill: Agente de acciones y ETFs
+# Skill: Agente de acciones y ETFs — v2
 
 ## Cuándo se activa
-Este skill se activa automáticamente cuando:
-- El perfil del usuario incluye tolerancia moderada o agresiva
-- El usuario menciona acciones, ETFs, bolsa, S&P 500, dividendos
-- El allocate_portfolio asigna capital a la vertical "equity"
+Automáticamente cuando el allocate_portfolio asigna capital a "equity" o el usuario menciona acciones, ETFs, bolsa, S&P 500, Nasdaq, o nombres de acciones.
 
-## Lógica de decisión autónoma
+## Selección de activos por nivel de riesgo
 
-### Selección de activos
+### Riesgo BAJO
 ```
-SI capital asignado a equity < $50:
-  → Solo 1 ETF diversificado (VOO o VT)
-  → Explicar: "Con menos de $50 es mejor concentrar en un solo fondo diversificado"
+SOLO ETFs diversificados:
+  - VOO (S&P 500): el estándar de oro, 8-12% anual histórico
+  - VT (mercado global): diversificación internacional
+  - SCHD (dividendos): ingreso pasivo vía dividendos
 
-SI capital entre $50 y $200:
-  → 2 ETFs: uno de base (VOO) + uno de ingreso (SCHD o VYM)
-  → Proporción: 70% base + 30% ingreso
-
-SI capital entre $200 y $500:
-  → 3-4 posiciones: base (VOO) + crecimiento (QQQ) + ingreso (SCHD) + bono (BND si moderado)
-  → Proporción según tolerancia
-
-SI capital > $500:
-  → 4-5 posiciones incluyendo acciones individuales (MSFT, AMD, o del sector que le interese)
-  → ETFs como base (60%) + individuales como satélite (40%)
+NO acciones individuales para riesgo bajo.
 ```
 
-### Validación de correlación (ejecutar SIEMPRE)
+### Riesgo MODERADO
 ```
-SI el plan incluye VOO y QQQ:
-  → Obtener precios históricos 30 días de ambos con Alpha Vantage
-  → Ejecutar calculate_correlation
-  → SI correlación > 0.7:
-    → REEMPLAZAR parte de QQQ con BND (bonos, corr ~0.15) o VWO (emergentes, corr ~0.62)
-    → Explicar al usuario: "VOO y QQQ se mueven casi igual. Reemplacé parte de QQQ con [X] para que si uno baja, el otro no necesariamente baje también"
-```
+ETFs sectoriales + blue-chips selectas:
+  - QQQ (Nasdaq 100): exposición a tech, ~15% anual histórico
+  - XLK (Technology Select): similar a QQQ con menos concentración
+  - AAPL, MSFT, GOOGL: blue-chips de mega cap
+  - AMZN: e-commerce + cloud (AWS)
 
-### Evaluación técnica (ejecutar para cada activo candidato)
-```
-→ Consultar Alpha Vantage: precio actual, RSI 14d, P/E ratio
-→ SI RSI > 70: advertir "Este activo está sobrecomprado (muchos han comprado recientemente). Podría corregir a corto plazo. Considera esperar 1-2 semanas o entrar con la mitad ahora y la mitad después."
-→ SI RSI < 30: señalar "Este activo está sobrevendido (ha caído mucho). Podría ser buen punto de entrada, pero verifica que no haya una razón fundamental para la caída."
-→ SI P/E > 35 y perfil es moderado: advertir "Este activo está caro comparado con sus ganancias. El riesgo de corrección es mayor."
+Máximo 3-4 acciones individuales. Peso máximo 20% por acción.
 ```
 
-## Datos a obtener (Alpha Vantage)
-Para cada activo candidato, consultar:
-1. GLOBAL_QUOTE → precio actual, cambio diario
-2. OVERVIEW → P/E, EPS, dividend yield, market cap, 52w high/low
-3. RSI (function=RSI, interval=daily, time_period=14)
-
-## Plataformas y decisión automática
+### Riesgo ALTO (OBLIGATORIO usar esta lista)
 ```
-SI usuario no tiene cuenta en ninguna plataforma:
-  → Recomendar Hapi (más fácil, desde $5, PSE/Nequi)
-  
-SI usuario ya tiene eToro:
-  → Usar eToro para acciones (ya tiene cuenta)
-  → Agregar Hapi solo si eToro no tiene un activo específico
+Acciones de alto crecimiento / alta volatilidad:
+  - NVDA: líder GPUs/IA, beta ~1.8, movimientos de 5-10% en un día
+  - TSLA: polarizante, beta ~2.0, puede subir 50% o caer 40% en un trimestre
+  - AMD: competidor directo de NVDA en IA, beta ~1.7
+  - COIN: proxy de cripto en bolsa, beta ~3.0, se mueve con BTC
+  - MSTR: apalancamiento implícito a BTC (~2x), beta ~3.5
+  - PLTR: IA empresarial + gobierno, beta ~1.6
+  - SOFI: fintech de alto crecimiento
+  - RIOT/MARA: mineros de Bitcoin, beta ~3.0+
 
-SI capital a invertir > $1000 y perfil avanzado:
-  → Considerar Interactive Brokers (mejores comisiones para volumen)
-```
+ETFs apalancados (solo para riesgo alto):
+  - TQQQ: Nasdaq 3x (NO para hold > 3 meses por decay)
+  - SOXL: Semiconductores 3x
+  - ADVERTENCIA: ETFs apalancados pierden valor en mercados laterales
 
-| Plataforma | Mínimo | Comisión | Depósito CO | Regulación |
-|-----------|--------|----------|-------------|------------|
-| Hapi | $5 | $0 broker, ~$0.10 clearing | PSE, Nequi | SEC/FINRA/SIPC |
-| eToro | $200 | $0 acciones reales | PayPal, tarjeta | CySEC/FCA |
-| XTB | $0 | $0 hasta 100K EUR/mes | PSE | KNF/FCA |
-
-## ETFs base (consultables)
-| ETF | Qué es | Expense | Dividend yield | Para qué |
-|-----|--------|---------|---------------|----------|
-| VOO | S&P 500 | 0.03% | ~1.3% | Base de todo portafolio |
-| QQQ | NASDAQ 100 | 0.20% | ~0.5% | Crecimiento tech |
-| VT | Mercado global | 0.07% | ~1.5% | Máxima diversificación |
-| SCHD | Dividendos selectos | 0.06% | ~3.5% | Ingreso pasivo cash |
-| VYM | Alto dividendo | 0.06% | ~2.8% | Ingreso pasivo estable |
-| BND | Bonos USA | 0.03% | ~3.5% | Reducir volatilidad |
-| VWO | Mercados emergentes | 0.08% | ~3.0% | Descorrelacionar de USA |
-| GLD | Oro | 0.40% | 0% | Cobertura crisis |
-
-## Cálculos obligatorios por posición
-Para CADA activo que entre en el plan:
-1. `calculate_scenarios(amount, expected_apy, volatility, passive_income, months)`
-   - Para VOO: apy=0.10, volatility=0.15, passive_income basado en dividend yield
-   - Para QQQ: apy=0.12, volatility=0.20
-   - Para BND: apy=0.04, volatility=0.05
-2. `calculate_risk_score(volatility_30d, max_drawdown_12m, "instant", True, weight_pct)`
-3. `calculate_tax_impact("us_etf_dividend", estimated_annual_dividend, has_w8ben)`
-
-## Cronograma (auto-generar según plataforma elegida)
-```
-SI plataforma = Hapi:
-  Día 1: Descargar app + registrar con cédula (15 min, verificación 24h)
-  Día 2: Depositar via PSE ($0) + comprar con orden limit (~$0.10 clearing)
-  Día 2: Llenar W-8BEN en Configuración > Información fiscal (5 min)
-  Día 15: Verificar posición en portafolio
-  Día 30: Segundo aporte DCA
-
-SI plataforma = eToro:
-  Día 1: Registrar en etoro.com (10 min, KYC 1-3 días)
-  Día 3: Depositar $200 mínimo via PayPal o tarjeta
-  Día 3: Comprar activos. Llenar W-8BEN si aplica
-  Día 30: Segundo aporte
+PROHIBIDO para riesgo alto:
+  - VOO, VT, SCHD → demasiado conservadores
+  - QQQ → solo si es TQQQ (3x)
 ```
 
-## W-8BEN (decisión automática)
+## Datos a consultar ANTES de recomendar (MCP servers)
 ```
-SI el plan incluye cualquier acción o ETF de USA:
-  → SIEMPRE incluir en el cronograma: "Llenar W-8BEN"
-  → SIEMPRE calcular impacto con y sin W-8BEN para mostrar la diferencia
-  → SIEMPRE marcar como URGENTE si no lo tiene
+POR CADA acción candidata:
+  1. Alpha Vantage → precio actual, P/E, EPS, dividendo, market cap
+  2. Alpha Vantage → RSI, MACD, SMA50, SMA200
+  3. Yahoo Finance → próximo earnings date, analyst consensus
+  4. TradingView → screener para verificar señal técnica
+
+EVALUAR:
+  - RSI < 30: sobreventa → posible oportunidad de compra
+  - RSI > 70: sobrecompra → esperar corrección
+  - Precio < SMA200: tendencia bajista → precaución
+  - Precio > SMA50 cruzando SMA200: golden cross → señal alcista
+  - MACD cruzando al alza: momentum positivo
 ```
 
-## Explicación adaptativa
+## Apalancamiento en eToro
 ```
-SI principiante:
-  "Un ETF es como una canasta con pedacitos de muchas empresas. En lugar de comprar una acción de Apple por $230, compras un pedacito de un fondo que INCLUYE Apple junto con otras 499 empresas."
+eToro permite apalancamiento en acciones:
+  - Sin apalancamiento (1x): compras la acción real
+  - Con apalancamiento (2x, 5x): compras un CFD
 
-SI intermedio:
-  "VOO replica el S&P 500 con expense ratio de 0.03%. Históricamente ~10% anual."
+PARA RIESGO ALTO:
+  → Sugerir 2x en acciones de convicción fuerte (NVDA, TSLA)
+  → NUNCA 5x (riesgo de liquidación muy alto con $100)
+  → Con 2x en $25: tu exposición real es $50
+  → Ganancia de +20% con 2x = +40% real
+  → Pérdida de -20% con 2x = -40% real
 
-SI avanzado:
-  "VOO (SPY si prefieres mayor liquidez), ER 0.03%, tracking error mínimo. P/E actual del índice en [consultar]."
+SIEMPRE advertir:
+  "El apalancamiento multiplica tanto ganancias como pérdidas. Con 2x, una caída del 50% en el activo liquida tu posición completamente."
+```
+
+## Formato de recomendación por acción
+```
+NOMBRE: NVDA (NVIDIA Corporation)
+PLATAFORMA: eToro
+MONTO: $25 (25% del portafolio)
+APALANCAMIENTO: 2x (exposición real: $50)
+PRECIO ACTUAL: $177.64 (via Alpha Vantage)
+RSI: 49.4 (neutral — buen punto de entrada)
+TENDENCIA: Lateral con soporte en SMA200 ($180)
+
+TESIS: Semiconductores en superciclo por demanda de chips IA. NVDA está en zona neutral
+tras corrección del -16% desde máximos. MACD cruzando al alza — señal de reversión.
+
+CATALIZADOR: Earnings Q2 2026 (fecha: mayo 2026). Los últimos 4 earnings fueron beats > 10%.
+Si el patrón se repite, movimiento esperado de +8-15% post-earnings.
+
+RIESGO: Si el gasto en IA se desacelera o regulación antimonopolio afecta, soporte en $150.
+P/E de 36x es alto pero justificado por crecimiento ~60% YoY.
+
+ENTRADA: Limit order a $175 (confluencia con SMA200)
+STOP LOSS: $155 (-11%)
+TAKE PROFIT 1: $200 (+14%) → vender 25% de la posición
+TAKE PROFIT 2: $230 (+31%) → vender otro 25%
+
+ESCENARIOS (sobre $25 invertidos con 2x):
+  Optimista (25%): +75% → $43.75 (+$18.75)
+  Base (50%): +20% → $30.00 (+$5.00)
+  Pesimista (25%): -40% → $15.00 (-$10.00)
+```
+
+## Cálculos obligatorios
+```
+1. calculate_risk_score(volatilidad_30d, max_drawdown, "high", apalancamiento > 1, peso%)
+2. calculate_scenarios(monto, rendimiento_estimado, volatilidad, passive=0, months)
+3. calculate_tax_impact("equity_dividend" o "equity_capital_gain", ganancia_estimada)
+4. SI hay 2+ acciones en portafolio: calculate_correlation entre ellas
+```
+
+## Encadenamiento
+```
+→ Si recomienda NVDA + AMD → calculate_correlation (probablemente > 0.7 → advertir)
+→ Si recomienda COIN o MSTR → verificar precio de BTC (CoinGecko) porque están correlacionados
+→ Antes de presentar → validar contra risk_rules.md
+→ Después del plan → agregar calendario de earnings en el cronograma
 ```
