@@ -1,4 +1,4 @@
-# Template del plan de inversión — v5
+# Template del plan de inversión — v6
 
 ## Rendimiento mínimo por perfil (escenario BASE, 6 meses)
 ```
@@ -10,56 +10,103 @@ Bajo: +4-8% | Moderado: +10-20% | Alto: +30-60% | Extremo: +40-200%
 Bajo: ≤60% | Moderado: ≤30% | Alto: ≤10% | Extremo: ≤5%
 ```
 
-## REGLAS DE PRESENTACIÓN VISUAL (JSX)
+## ESTRUCTURA JSX OBLIGATORIA — exactamente 4 tabs
 ```
-OBLIGATORIO para risk scores:
-  → Mostrar el NÚMERO visible: "7.2/10" NO solo una barra gráfica
-  → Formato: texto + número + barra (no solo barra)
-  → Ejemplo: "Risk Score: 7.2/10 — ALTO" con barra visual al lado
-  → NUNCA mostrar solo barras sin el número explícito
+El plan JSX DEBE tener EXACTAMENTE estos 4 tabs, en este orden, con estos nombres:
 
-OBLIGATORIO para escenarios:
-  → Mostrar PORCENTAJE y MONTO en TEXTO visible
-  → Ejemplo: "🟢 Optimista (25%): +90% → $332"
-  → NO solo dentro de barras gráficas que requieren click
+  Tab 1: "📊 Plan"
+  Tab 2: "📅 Cronograma"
+  Tab 3: "📈 Escenarios"
+  Tab 4: "⚠️ Riesgo"
 
-OBLIGATORIO para overnight fees:
-  → Mostrar el costo mensual estimado en cada posición CFD
-  → Ejemplo: "Overnight: ~$1.58/mes"
+PROHIBIDO:
+  - Agregar tabs adicionales (NO crear tab "Intel", "Fiscal", "Detalles", etc.)
+  - Cambiar los nombres de los tabs
+  - Reorganizar el orden
 
-OBLIGATORIO para fuentes de datos:
-  → Cada dato debe indicar la fuente: "(via Alpha Vantage)", "(via CoinGecko)"
-  → Si un dato es estimado: "(estimado)"
+Si hay información extra (earnings history, DEX volumes, trending cripto):
+  → Incluirla DENTRO del Tab 1 "Plan" como parte del contexto de mercado
+  → O NO incluirla si no es esencial para la decisión de inversión
 ```
 
-## Secciones obligatorias (12)
+## Contenido de cada tab
 
-1. Contexto mercado con datos reales y fuente MCP
-2. Asimetrías detectadas con datos
-3. Popular investors — criterios de búsqueda en eToro + nombres referencia (verificar)
-4. Posiciones con tesis, SL, TP, escenarios (NÚMEROS visibles)
-5. Cálculos reales con risk score NUMÉRICO visible (X.X/10)
-6. Correlación entre posiciones principales
-7. Costos totales (overnight + trading fees)
-8. Stress test moderado y severo con diferencia visible
-9. Cronograma Mes 1 con earnings dates
-10. Escenarios 3M y 6M en tablas
-11. Impacto fiscal Colombia
-12. Seguimiento + disclaimers
-
-## Checklist calidad
+### Tab 1: "📊 Plan" — Todo el análisis y las posiciones
 ```
-□ Precios reales via MCP
-□ Tesis específica por posición
-□ Catalizador con fecha
-□ SL y TP por posición
-□ Escenarios con NÚMEROS visibles (no solo barras)
-□ Risk score con NÚMERO visible X.X/10 (no solo barras)
-□ Overnight fees en CFDs
-□ Correlación calculada
-□ Stress test con escenarios diferenciados
-□ Copy trading incluido como posición
-□ Checkpoints ✅ visibles
-□ Fuente de cada dato indicada
-□ Disclaimers al final
+Orden de secciones dentro del tab:
+  1. Paso 1: Contexto de mercado (datos MCP con fuente)
+  2. Paso 2: Asimetrías detectadas (2-3 máximo)
+  3. Paso 3: Popular investors / Copy trading
+  4. Paso 4: Las 3 posiciones con detalle completo
+  5. Distribución del capital (barra visual)
+  6. Resumen por plataforma (eToro / Binance)
+```
+
+### Tab 2: "📅 Cronograma" — Plan semanal del Mes 1
+```
+  Semana 1: Setup + primeras compras (día a día)
+  Semana 2: Revisión y ajustes
+  Semana 3: Refuerzo o nuevas entradas
+  Semana 4: Evaluación y rebalanceo
+  
+  INCLUIR: earnings dates de acciones en el portafolio como hitos
+```
+
+### Tab 3: "📈 Escenarios" — Tablas a 3M y 6M + honestidad sobre rendimiento
+```
+  1. Nota de honestidad sobre rendimiento mensual objetivo vs realista
+  2. Tabla escenarios a 3 meses (optimista/base/pesimista con razones)
+  3. Tabla escenarios a 6 meses (optimista/base/pesimista con razones)
+  4. Impacto fiscal Colombia (resumen por tipo de activo)
+```
+
+### Tab 4: "⚠️ Riesgo" — Stress test + validación + disclaimers
+```
+  1. Stress test: crash moderado (-20%) y severo (-40%) con montos
+  2. Correlación entre posiciones
+  3. Checks de validación (concentración, defensivo, tolerancia)
+  4. Reglas de protección y triggers de salida
+  5. Disclaimers obligatorios
+```
+
+## REGLAS DE FORMATO NUMÉRICO
+```
+Risk scores — SIEMPRE mostrar como texto visible:
+  CORRECTO: "8.0/10 — ALTO" (número + barra visual al lado)
+  INCORRECTO: solo barra gráfica sin número
+
+Escenarios — SIEMPRE mostrar porcentaje Y monto:
+  CORRECTO: "🟢 Optimista (25%): +80.0% → $315.00"
+  INCORRECTO: solo barra de color sin números
+
+Stress test — SIEMPRE diferenciar escenarios:
+  CORRECTO: Moderado $385 (-22.9%) vs Severo $270 (-46.0%)
+  INCORRECTO: mismo resultado para todos los escenarios
+
+Overnight fees — SIEMPRE incluir en posiciones CFD:
+  CORRECTO: "Overnight: ~$1.58/mes ($9.48 en 6M)"
+  
+Fuentes — SIEMPRE indicar:
+  CORRECTO: "$72,182 (via CoinGecko)"
+  INCORRECTO: "$72,182" sin fuente
+```
+
+## Checklist de calidad (verificar ANTES de generar JSX)
+```
+□ ¿Exactamente 4 tabs con los nombres correctos?
+□ ¿NO hay tabs adicionales?
+□ ¿Precios reales via MCP con fuente indicada?
+□ ¿Tesis específica por posición (no genérica)?
+□ ¿Catalizador con fecha por posición?
+□ ¿SL y TP por posición?
+□ ¿Risk score como NÚMERO visible X.X/10?
+□ ¿Escenarios con % y $ en texto visible?
+□ ¿Overnight fees en posiciones CFD?
+□ ¿Stress test con escenarios diferenciados?
+□ ¿Copy trading incluido como posición (si eToro)?
+□ ¿Correlación calculada?
+□ ¿Rendimiento base ≥ mínimo del perfil?
+□ ¿% defensivo ≤ límite del perfil?
+□ ¿Checkpoints ✅ visibles?
+□ ¿Disclaimers al final?
 ```
