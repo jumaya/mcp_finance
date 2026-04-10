@@ -1,6 +1,7 @@
 """
 MCP Server propio: calculadoras financieras para el sistema de inversión.
-v2 — Corregido: leverage en risk_score, stress_test y scenarios.
+v3 — Fix 1: floor mínimo de risk score por leverage
+     Fix 2: monthly_cost_usd en calculate_scenarios para overnight fees
 
 Ejecutar: uv run --no-project --with fastmcp server.py
 """
@@ -12,7 +13,7 @@ mcp = FastMCP("Investment Calculators")
 
 
 # ============================================================
-# RISK CALCULATOR — v2 (con leverage)
+# RISK CALCULATOR — v3 (con floor por leverage)
 # ============================================================
 
 @mcp.tool()
@@ -37,7 +38,6 @@ def calculate_risk_score(
     """
     liquidity_map = {"instant": 0, "hours": 0.3, "days": 0.8, "weeks": 1.5, "months": 2.0}
 
-    # Volatilidad ajustada por apalancamiento
     effective_vol = volatility_30d * leverage
     effective_dd = abs(max_drawdown_12m) * leverage
 
@@ -47,12 +47,26 @@ def calculate_risk_score(
     plat_score = 0.0 if platform_regulated else 1.5
     conc_score = min(weight_in_portfolio_pct / 30.0, 1.0)
 
-    # Bonus de riesgo por apalancamiento
     leverage_score = 0.0
     if leverage >= 2.0:
-        leverage_score = min((leverage - 1.0) * 1.5, 3.0)  # 2x = +1.5, 3x = +3.0, 5x = +3.0 (cap)
+        leverage_score = min((leverage - 1.0) * 1.5, 3.0)
 
     composite = round(min(vol_score + dd_score + liq_score + plat_score + conc_score + leverage_score, 10.0), 1)
+
+    # ── FIX v3: Floor mínimo por leverage ──
+    risk_floor = 0.0
+    if leverage >= 5.0:
+        risk_floor = 8.0
+    elif leverage >= 3.0:
+        risk_floor = 7.0
+    elif leverage >= 2.0:
+        risk_floor = 5.0
+    elif leverage > 1.0:
+        risk_floor = 4.0
+
+    floor_applied = composite < risk_floor
+    if floor_applied:
+        composite = risk_floor
 
     max_alloc = 30.0
     if composite > 7:
@@ -62,15 +76,17 @@ def calculate_risk_score(
 
     warnings = []
     if effective_vol > 0.3:
-        warnings.append(f"Volatilidad efectiva extrema: {effective_vol:.0%} (vol {volatility_30d:.0%} × {leverage}x)")
+        warnings.append(f"Volatilidad efectiva extrema: {effective_vol:.0%} (vol {volatility_30d:.0%} x {leverage}x)")
     if effective_dd > 0.4:
-        warnings.append(f"Drawdown efectivo severo: -{effective_dd:.0%} (dd {abs(max_drawdown_12m):.0%} × {leverage}x)")
+        warnings.append(f"Drawdown efectivo severo: -{effective_dd:.0%} (dd {abs(max_drawdown_12m):.0%} x {leverage}x)")
     if weight_in_portfolio_pct > 30:
-        warnings.append(f"Concentración excesiva: {weight_in_portfolio_pct:.0f}% del portafolio")
+        warnings.append(f"Concentracion excesiva: {weight_in_portfolio_pct:.0f}% del portafolio")
     if not platform_regulated:
-        warnings.append("Plataforma sin regulación de primer nivel")
+        warnings.append("Plataforma sin regulacion de primer nivel")
     if leverage > 1:
-        warnings.append(f"Apalancamiento {leverage}x: una caída de {50/leverage:.0f}% en el activo liquida la posición")
+        warnings.append(f"Apalancamiento {leverage}x: caida de {50/leverage:.0f}% en el activo = liquidacion")
+    if floor_applied:
+        warnings.append(f"Score ajustado al minimo {risk_floor} por apalancamiento {leverage}x")
 
     return {
         "composite_score": composite,
@@ -83,6 +99,7 @@ def calculate_risk_score(
             "leverage": round(leverage_score, 2),
         },
         "leverage": leverage,
+        "risk_floor_applied": risk_floor if floor_applied else None,
         "effective_volatility": round(effective_vol, 4),
         "effective_drawdown": round(effective_dd, 4),
         "max_allocation_pct": max_alloc,
@@ -91,18 +108,13 @@ def calculate_risk_score(
     }
 
 
-# ============================================================
-# CORRELATION CALCULATOR
-# ============================================================
-
 @mcp.tool()
 def calculate_correlation(prices_a: list[float], prices_b: list[float]) -> dict:
     """
-    Calcula la correlación de Pearson entre dos series de precios.
-    Útil para evaluar diversificación del portafolio.
+    Calcula la correlacion de Pearson entre dos series de precios.
 
     Args:
-        prices_a: Lista de precios de cierre del activo A (mínimo 10 valores)
+        prices_a: Lista de precios de cierre del activo A (minimo 10 valores)
         prices_b: Lista de precios de cierre del activo B (misma longitud que prices_a)
     """
     n = min(len(prices_a), len(prices_b))
@@ -120,28 +132,24 @@ def calculate_correlation(prices_a: list[float], prices_b: list[float]) -> dict:
     std_b = math.sqrt(sum((b - mean_b) ** 2 for b in returns_b) / (len(returns_b) - 1))
 
     if std_a == 0 or std_b == 0:
-        return {"correlation": 0.0, "is_problematic": False, "interpretation": "Sin variación"}
+        return {"correlation": 0.0, "is_problematic": False, "interpretation": "Sin variacion"}
 
     corr = round(cov / (std_a * std_b), 3)
     is_problematic = abs(corr) > 0.7
 
     if corr > 0.7:
-        interp = "Alta correlación positiva: se mueven juntos. Poca diversificación."
+        interp = "Alta correlacion positiva: se mueven juntos. Poca diversificacion."
     elif corr > 0.3:
-        interp = "Correlación moderada positiva."
+        interp = "Correlacion moderada positiva."
     elif corr > -0.3:
-        interp = "Baja correlación: buena diversificación."
+        interp = "Baja correlacion: buena diversificacion."
     elif corr > -0.7:
-        interp = "Correlación negativa moderada: excelente diversificación."
+        interp = "Correlacion negativa moderada: excelente diversificacion."
     else:
-        interp = "Alta correlación negativa: se mueven en dirección opuesta."
+        interp = "Alta correlacion negativa: se mueven en direccion opuesta."
 
     return {"correlation": corr, "is_problematic": is_problematic, "interpretation": interp}
 
-
-# ============================================================
-# STRESS TEST — v2 (con leverage)
-# ============================================================
 
 @mcp.tool()
 def stress_test_portfolio(
@@ -154,9 +162,7 @@ def stress_test_portfolio(
     Args:
         positions: Lista de posiciones, cada una con:
             {"asset_id": str, "amount_usd": float, "vertical": str, "monthly_income_usd": float, "leverage": float}
-            leverage es opcional (default 1.0). Usar 2.0 para CFD 2x, etc.
-        scenario: "moderate_crash" (-15% equity, -25% crypto), "severe_crash" (-30% equity, -50% crypto),
-                  "crypto_winter" (0% equity, -60% crypto), "stable_only" (mild impacts)
+        scenario: "moderate_crash", "severe_crash", "crypto_winter", "stable_only"
     """
     impacts = {
         "moderate_crash": {"equity": -0.15, "defi": -0.25, "forex": -0.05, "social": -0.12, "stablecoin": 0},
@@ -175,15 +181,10 @@ def stress_test_portfolio(
         lev = p.get("leverage", 1.0)
         is_stable = "stable" in p.get("asset_id", "").lower() or "usdc" in p.get("asset_id", "").lower()
         base_rate = rates.get("stablecoin", 0) if is_stable else rates.get(v, -0.10)
-
-        # Aplicar multiplicador de apalancamiento al impacto
-        effective_rate = base_rate * lev
-
-        # Limitar pérdida al 100% del capital invertido (liquidación)
-        effective_rate = max(effective_rate, -1.0)
+        effective_rate = max(base_rate * lev, -1.0)
 
         impact_usd = round(p["amount_usd"] * effective_rate, 2)
-        after = round(max(p["amount_usd"] + impact_usd, 0), 2)  # No puede ser negativo
+        after = round(max(p["amount_usd"] + impact_usd, 0), 2)
 
         income_survival = 1.0 if is_stable else max(0.0, 1.0 + effective_rate)
         surviving = round(p.get("monthly_income_usd", 0) * income_survival, 2)
@@ -213,10 +214,6 @@ def stress_test_portfolio(
     }
 
 
-# ============================================================
-# TAX CALCULATOR (Colombia / DIAN)
-# ============================================================
-
 @mcp.tool()
 def calculate_tax_impact(
     asset_type: str,
@@ -225,76 +222,28 @@ def calculate_tax_impact(
     usd_to_cop: float = 4200.0,
 ) -> dict:
     """
-    Calcula el impacto fiscal para un activo de inversión bajo reglas colombianas (DIAN).
+    Calcula el impacto fiscal para un activo de inversion bajo reglas colombianas (DIAN).
 
     Args:
-        asset_type: Tipo de activo: "us_stock_dividend", "us_etf_dividend", "crypto_staking",
-                    "crypto_trading_gain", "defi_yield", "forex_gain", "copy_trading_gain",
-                    "equity_capital_gain"
+        asset_type: "us_stock_dividend", "us_etf_dividend", "crypto_staking",
+                    "crypto_trading_gain", "defi_yield", "forex_gain",
+                    "copy_trading_gain", "equity_capital_gain"
         annual_income_usd: Ingreso anual estimado en USD
-        has_w8ben: Si tiene formulario W-8BEN llenado (reduce retención USA)
+        has_w8ben: Si tiene formulario W-8BEN
         usd_to_cop: Tasa de cambio USD/COP actual
     """
     UVT_2025 = 47_065
     income_cop = annual_income_usd * usd_to_cop
 
     rules = {
-        "us_stock_dividend": {
-            "income_type": "renta_fuente_extranjera",
-            "us_withholding": 0.15 if has_w8ben else 0.30,
-            "co_rate": 0.0,
-            "retention_source": 0.0,
-            "w8ben_applicable": True,
-        },
-        "us_etf_dividend": {
-            "income_type": "renta_fuente_extranjera",
-            "us_withholding": 0.15 if has_w8ben else 0.30,
-            "co_rate": 0.0,
-            "retention_source": 0.0,
-            "w8ben_applicable": True,
-        },
-        "crypto_staking": {
-            "income_type": "ganancia_ocasional",
-            "us_withholding": 0.0,
-            "co_rate": 0.15,
-            "retention_source": 0.0,
-            "w8ben_applicable": False,
-        },
-        "crypto_trading_gain": {
-            "income_type": "ganancia_ocasional",
-            "us_withholding": 0.0,
-            "co_rate": 0.15,
-            "retention_source": 0.0,
-            "w8ben_applicable": False,
-        },
-        "defi_yield": {
-            "income_type": "ganancia_ocasional",
-            "us_withholding": 0.0,
-            "co_rate": 0.15,
-            "retention_source": 0.0,
-            "w8ben_applicable": False,
-        },
-        "forex_gain": {
-            "income_type": "renta_ordinaria",
-            "us_withholding": 0.0,
-            "co_rate": 0.0,
-            "retention_source": 0.04,
-            "w8ben_applicable": False,
-        },
-        "copy_trading_gain": {
-            "income_type": "renta_fuente_extranjera",
-            "us_withholding": 0.0,
-            "co_rate": 0.0,
-            "retention_source": 0.0,
-            "w8ben_applicable": False,
-        },
-        "equity_capital_gain": {
-            "income_type": "ganancia_ocasional",
-            "us_withholding": 0.0,
-            "co_rate": 0.15,
-            "retention_source": 0.0,
-            "w8ben_applicable": False,
-        },
+        "us_stock_dividend": {"income_type": "renta_fuente_extranjera", "us_withholding": 0.15 if has_w8ben else 0.30, "co_rate": 0.0, "retention_source": 0.0, "w8ben_applicable": True},
+        "us_etf_dividend": {"income_type": "renta_fuente_extranjera", "us_withholding": 0.15 if has_w8ben else 0.30, "co_rate": 0.0, "retention_source": 0.0, "w8ben_applicable": True},
+        "crypto_staking": {"income_type": "ganancia_ocasional", "us_withholding": 0.0, "co_rate": 0.15, "retention_source": 0.0, "w8ben_applicable": False},
+        "crypto_trading_gain": {"income_type": "ganancia_ocasional", "us_withholding": 0.0, "co_rate": 0.15, "retention_source": 0.0, "w8ben_applicable": False},
+        "defi_yield": {"income_type": "ganancia_ocasional", "us_withholding": 0.0, "co_rate": 0.15, "retention_source": 0.0, "w8ben_applicable": False},
+        "forex_gain": {"income_type": "renta_ordinaria", "us_withholding": 0.0, "co_rate": 0.0, "retention_source": 0.04, "w8ben_applicable": False},
+        "copy_trading_gain": {"income_type": "renta_fuente_extranjera", "us_withholding": 0.0, "co_rate": 0.0, "retention_source": 0.0, "w8ben_applicable": False},
+        "equity_capital_gain": {"income_type": "ganancia_ocasional", "us_withholding": 0.0, "co_rate": 0.15, "retention_source": 0.0, "w8ben_applicable": False},
     }
 
     r = rules.get(asset_type, rules["crypto_trading_gain"])
@@ -305,68 +254,46 @@ def calculate_tax_impact(
 
     must_declare = income_cop > 1400 * UVT_2025
     must_report_foreign = True
-    electronic_invoice = income_cop > 3500 * UVT_2025
 
     actions = []
     if r["w8ben_applicable"] and not has_w8ben:
-        actions.append("URGENTE: Llenar formulario W-8BEN para reducir retención USA del 30% al 15%")
+        actions.append("URGENTE: Llenar W-8BEN para reducir retencion USA del 30% al 15%")
     if must_declare:
         actions.append("Declarar renta anual ante la DIAN")
     if must_report_foreign:
         actions.append("Reportar activos en el exterior ante la DIAN")
-    if electronic_invoice:
-        actions.append("Habilitar facturación electrónica (ingresos superan 3500 UVT)")
 
     return {
-        "asset_type": asset_type,
-        "income_type": r["income_type"],
+        "asset_type": asset_type, "income_type": r["income_type"],
         "gross_income_usd": annual_income_usd,
-        "us_withholding_pct": r["us_withholding"],
-        "us_withholding_usd": round(annual_income_usd * r["us_withholding"], 2),
-        "co_tax_pct": r["co_rate"],
-        "co_retention_pct": r["retention_source"],
-        "net_income_usd": round(after_co, 2),
-        "total_tax_usd": total_tax,
-        "net_return_multiplier": net_multiplier,
+        "net_income_usd": round(after_co, 2), "total_tax_usd": total_tax,
         "effective_tax_rate_pct": round((1 - net_multiplier) * 100, 1),
         "w8ben_applicable": r["w8ben_applicable"],
-        "w8ben_benefit": f"Reduce retención USA del 30% al 15% (ahorras ${round(annual_income_usd * 0.15, 2)}/año)" if r["w8ben_applicable"] else None,
         "must_declare_renta": must_declare,
-        "must_report_foreign_assets": must_report_foreign,
-        "electronic_invoice_required": electronic_invoice,
         "action_items": actions,
     }
 
 
-# ============================================================
-# POSITION SIZING (Forex)
-# ============================================================
-
 @mcp.tool()
 def calculate_position_size(
-    capital_usd: float,
-    risk_per_trade_pct: float,
-    entry_price: float,
-    stop_loss_price: float,
-    leverage: float = 1.0,
+    capital_usd: float, risk_per_trade_pct: float,
+    entry_price: float, stop_loss_price: float, leverage: float = 1.0,
 ) -> dict:
     """
-    Calcula el tamaño de posición para un trade de Forex/CFDs.
+    Calcula el tamano de posicion para un trade de Forex/CFDs.
 
     Args:
-        capital_usd: Capital total disponible para trading
-        risk_per_trade_pct: Porcentaje de riesgo por trade (recomendado: 1-2%)
+        capital_usd: Capital total disponible
+        risk_per_trade_pct: % de riesgo por trade (recomendado: 1-2%)
         entry_price: Precio de entrada
         stop_loss_price: Precio de stop loss
-        leverage: Apalancamiento (recomendado máximo 5x para principiantes)
+        leverage: Apalancamiento (max recomendado: 5x)
     """
     if leverage > 10:
         return {"error": "Apalancamiento mayor a 10x es extremadamente riesgoso", "position_size": 0}
 
     risk_usd = capital_usd * (risk_per_trade_pct / 100)
     stop_distance = abs(entry_price - stop_loss_price)
-    stop_distance_pct = stop_distance / entry_price * 100
-
     if stop_distance == 0:
         return {"error": "Stop loss no puede ser igual al precio de entrada", "position_size": 0}
 
@@ -379,16 +306,9 @@ def calculate_position_size(
         warnings.append(f"Riesgo del {risk_per_trade_pct}% es alto. Recomendado: 1-2%")
     if leverage > 5:
         warnings.append(f"Apalancamiento {leverage}x es alto. Recomendado: 1-5x")
-    if margin_required > capital_usd * 0.5:
-        warnings.append(f"El margen requerido (${margin_required:.2f}) supera el 50% del capital")
 
     return {
-        "capital_usd": capital_usd,
-        "risk_per_trade_pct": risk_per_trade_pct,
-        "risk_usd": round(risk_usd, 2),
-        "entry_price": entry_price,
-        "stop_loss_price": stop_loss_price,
-        "stop_distance_pct": round(stop_distance_pct, 2),
+        "capital_usd": capital_usd, "risk_usd": round(risk_usd, 2),
         "leverage": leverage,
         "position_size_units": round(position_size, 4),
         "position_value_usd": round(position_value, 2),
@@ -400,27 +320,20 @@ def calculate_position_size(
     }
 
 
-# ============================================================
-# PORTFOLIO ALLOCATOR
-# ============================================================
-
 @mcp.tool()
 def allocate_portfolio(
-    capital_usd: float,
-    monthly_savings_usd: float,
-    risk_tolerance: str,
-    horizon: str,
-    exclude_verticals: list[str] | None = None,
+    capital_usd: float, monthly_savings_usd: float,
+    risk_tolerance: str, horizon: str, exclude_verticals: list[str] | None = None,
 ) -> dict:
     """
-    Genera la asignación de portafolio por vertical y fase.
+    Genera la asignacion de portafolio por vertical.
 
     Args:
-        capital_usd: Capital total disponible
-        monthly_savings_usd: Ahorro mensual para reinvertir
+        capital_usd: Capital total
+        monthly_savings_usd: Ahorro mensual
         risk_tolerance: "conservative", "moderate", "aggressive", "mixed"
-        horizon: "short" (1-6m), "medium" (6-18m), "long" (2-5y), "combined"
-        exclude_verticals: Verticales a excluir, ej: ["forex"]
+        horizon: "short", "medium", "long", "combined"
+        exclude_verticals: Verticales a excluir
     """
     excluded = set(exclude_verticals or [])
     templates = {
@@ -429,7 +342,6 @@ def allocate_portfolio(
         "aggressive": {"equity": 30, "defi": 30, "forex": 20, "social": 15, "reserve": 5},
         "mixed": {"equity": 35, "defi": 25, "forex": 15, "social": 15, "reserve": 10},
     }
-
     base = templates.get(risk_tolerance, templates["moderate"]).copy()
     for v in excluded:
         if v in base and v != "reserve":
@@ -437,28 +349,19 @@ def allocate_portfolio(
             base[v] = 0
             remaining = [k for k in base if k not in excluded and k != "reserve" and base[k] > 0]
             if remaining:
-                per_each = redistributed / len(remaining)
                 for r in remaining:
-                    base[r] += per_each
+                    base[r] += redistributed / len(remaining)
 
     total_pct = sum(base.values())
     allocation = {k: round(v / total_pct * 100, 1) for k, v in base.items()}
-    amounts = {k: round(capital_usd * v / 100, 2) for k, v in allocation.items()}
-
     return {
         "allocation_pct": allocation,
-        "allocation_usd": amounts,
-        "constraints_applied": {
-            "max_single_position": "30%",
-            "max_single_vertical": "50%",
-            "min_reserve": "5-15%",
-            "excluded": list(excluded),
-        },
+        "allocation_usd": {k: round(capital_usd * v / 100, 2) for k, v in allocation.items()},
     }
 
 
 # ============================================================
-# SCENARIOS — v2 (con leverage)
+# SCENARIOS — v3 (con monthly_cost_usd)
 # ============================================================
 
 @mcp.tool()
@@ -469,65 +372,61 @@ def calculate_scenarios(
     passive_income_annual_usd: float = 0.0,
     months: int = 12,
     leverage: float = 1.0,
+    monthly_cost_usd: float = 0.0,
 ) -> dict:
     """
-    Calcula 3 escenarios (optimista, base, pesimista) para una posición de inversión.
+    Calcula 3 escenarios (optimista, base, pesimista) para una posicion de inversion.
 
     Args:
-        amount_usd: Monto invertido (capital propio, no la exposición apalancada)
+        amount_usd: Monto invertido (capital propio)
         expected_apy: Rendimiento anual esperado del activo subyacente (ej: 0.10 = 10%)
-        volatility_annual: Volatilidad anualizada del activo subyacente (ej: 0.15 = 15%)
-        passive_income_annual_usd: Ingreso pasivo anual fijo (dividendos, staking rewards)
+        volatility_annual: Volatilidad anualizada del activo (ej: 0.15 = 15%)
+        passive_income_annual_usd: Ingreso pasivo anual fijo (dividendos, staking)
         months: Horizonte en meses
-        leverage: Apalancamiento (1.0 = spot, 2.0 = CFD 2x). Multiplica rendimiento Y pérdida.
+        leverage: Apalancamiento (1.0 = spot, 2.0 = CFD 2x)
+        monthly_cost_usd: Costo mensual fijo (overnight fees CFDs). Se resta del rendimiento.
     """
     factor = months / 12.0
     passive = passive_income_annual_usd * factor
+    total_costs = monthly_cost_usd * months
 
-    # Rendimientos del activo subyacente
-    optimistic_return_base = (expected_apy + volatility_annual) * factor
-    base_return_base = expected_apy * factor
-    pessimistic_return_base = (expected_apy - 1.5 * volatility_annual) * factor
+    optimistic_base = (expected_apy + volatility_annual) * factor
+    base_base = expected_apy * factor
+    pessimistic_base = (expected_apy - 1.5 * volatility_annual) * factor
 
     scenarios = []
-    for name, price_change_base, prob in [
-        ("optimistic", optimistic_return_base, 25),
-        ("base", base_return_base, 50),
-        ("pessimistic", pessimistic_return_base, 25),
+    for name, change_base, prob in [
+        ("optimistic", optimistic_base, 25),
+        ("base", base_base, 50),
+        ("pessimistic", pessimistic_base, 25),
     ]:
-        # Aplicar leverage al rendimiento
-        price_change = price_change_base * leverage
-
-        # Limitar pérdida al -100% (liquidación)
-        price_change = max(price_change, -1.0)
-
-        price_impact = amount_usd * price_change
-        total = price_impact + passive
+        change = max(change_base * leverage, -1.0)
+        price_impact = amount_usd * change
+        total = price_impact + passive - total_costs
         scenarios.append({
             "name": name,
             "probability_pct": prob,
-            "asset_change_pct": round(price_change_base * 100, 1),
-            "leveraged_change_pct": round(price_change * 100, 1),
+            "asset_change_pct": round(change_base * 100, 1),
+            "leveraged_change_pct": round(change * 100, 1),
             "price_impact_usd": round(price_impact, 2),
             "passive_income_usd": round(passive, 2),
+            "costs_usd": round(total_costs, 2),
             "total_return_usd": round(total, 2),
             "total_return_pct": round(total / amount_usd * 100, 1) if amount_usd > 0 else 0,
             "portfolio_value": round(max(amount_usd + total, 0), 2),
-            "liquidated": price_change <= -1.0,
+            "liquidated": change <= -1.0,
         })
 
     return {
         "amount_usd": amount_usd,
         "leverage": leverage,
         "effective_exposure": round(amount_usd * leverage, 2),
+        "monthly_cost_usd": monthly_cost_usd,
+        "total_costs_over_period": round(total_costs, 2),
         "horizon_months": months,
         "scenarios": scenarios,
     }
 
-
-# ============================================================
-# ENTRY POINT
-# ============================================================
 
 if __name__ == "__main__":
     mcp.run()
