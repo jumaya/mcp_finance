@@ -1,72 +1,77 @@
-# Skill: Copy trading — v5
+# Skill: Copy trading — v6
 
 ## REGLA: Si usa eToro + riesgo ≥ 5 → copy trading OBLIGATORIO como posición
 
 ## Limitación conocida del eToro MCP server
 ```
-IMPORTANTE: El eToro MCP server oficial (api-portal.etoro.com/mcp) solo expone 2 tools:
-  - search_e_toro_api_docs → buscar en documentación de la API
-  - get_page_e_toro_api_docs → leer páginas de documentación
+El eToro MCP oficial (api-portal.etoro.com/mcp) solo expone 2 tools:
+  - search_e_toro_api_docs → buscar en documentación
+  - get_page_e_toro_api_docs → leer páginas de docs
 
 NO tiene tools para consultar Popular Investors en tiempo real.
 
 ACCIÓN DEL AGENTE:
-  1. EJECUTAR search_e_toro_api_docs con query "popular investors" o "copy trading API"
-     → Esto puede revelar endpoints de la API que el usuario podría usar directamente
-  2. EJECUTAR get_page_e_toro_api_docs para leer la documentación de copy trading
-     → Esto puede dar información sobre cómo funciona el copy trading en eToro
-  3. Indicar en el resultado: "(via eToro MCP: documentación consultada)"
-  4. DAR criterios de búsqueda específicos para que el usuario busque manualmente:
-     → "En eToro → Descubrir → Popular Investors → Filtros: rendimiento >25%/año, 
-        riesgo 5-8, drawdown <25%, activo últimos 30 días, >500 copiadores"
-  5. DAR nombres de referencia conocidos PERO marcar como "(verificar en eToro)":
-     → @JeppeKirkBonde, @jaynemesis, @crypto101_kevin (datos históricos, verificar actual)
+  1. EJECUTAR search_e_toro_api_docs con query "popular investors" o "copy trading"
+  2. Indicar: "(via eToro MCP: documentación consultada)"
+  3. DAR criterios de búsqueda específicos para búsqueda manual:
+     "En eToro → Descubrir → Popular Investors → Filtros: rendimiento >X%, riesgo X-X"
+  4. DAR nombres de referencia marcados como "(verificar en eToro)":
+     @JeppeKirkBonde, @jaynemesis, @crypto101_kevin
 ```
 
-## Criterios por riesgo
+## Criterios de búsqueda por riesgo
 ```
-ALTO (7-10): rendimiento >25%/año, acepto drawdown 30%, risk 5-8, cripto+tech
-MODERADO (4-6): rendimiento >10%/año, drawdown <15%, risk 3-5
-BAJO (1-3): rendimiento >5%/año, drawdown <10%, risk 1-3
-```
-
-## Copy trading como POSICIÓN (formato obligatorio)
-```
-📊 COPY TRADING — eToro — Copy 2-3 traders
-  Capital: $XX (XX% del portafolio)
-  
-  Criterios de búsqueda (aplicar en eToro):
-    Rendimiento 12M: >XX%
-    Drawdown máximo: <XX%
-    Risk score: X-X/10
-    Activo: últimos 30 días
-    Copiadores: >500
-  
-  Traders de referencia (verificar en eToro):
-    @trader1 — rendimiento histórico +XX% (verificar actual)
-    @trader2 — rendimiento histórico +XX% (verificar actual)
-  
-  Escenarios (via calculate_scenarios):
-    🟢 Optimista: +XX% → $XX
-    🟡 Base: +XX% → $XX  
-    🔴 Pesimista: -XX% → $XX
-  
-  Risk score: X.X/10 (via calculate_risk_score)
-  Impuesto CO: renta fuente extranjera
-  
-  SL: Si drawdown de trader > 25% → dejar de copiar
-  TP: Dejar componer. Revisar mensualmente.
+ALTO (7-10): rendimiento >25%/año, drawdown <30%, risk eToro 5-8, cripto+tech
+MODERADO (4-6): rendimiento >10%/año, drawdown <15%, risk eToro 3-5
+BAJO (1-3): rendimiento >5%/año, drawdown <10%, risk eToro 1-3
 ```
 
-## Cálculos obligatorios
+## Parámetros para calculate_risk_score por tipo de trader
 ```
-Para copy trading, usar estos parámetros en calculate_risk_score:
-  volatility_30d: 0.15 (15% — volatilidad típica de trader agresivo)
-  max_drawdown_12m: -0.25 (25% — drawdown típico)
-  liquidity: "instant" (puedes dejar de copiar inmediatamente)
-  platform_regulated: true (eToro regulado CySEC/FCA)
-  weight_in_portfolio_pct: [el peso real]
+USAR ESTOS VALORES EXACTOS según el tipo de trader buscado:
+
+| Tipo de trader      | volatility_30d | max_drawdown_12m | Resultado esperado |
+|---------------------|---------------|------------------|--------------------|
+| Agresivo cripto     | 0.30          | -0.35            | ~4.5-5.5 moderate  |
+| Agresivo tech       | 0.25          | -0.30            | ~4.0-5.0 moderate  |
+| Mixto cripto+tech   | 0.25          | -0.30            | ~4.0-5.0 moderate  |
+| Conservador         | 0.10          | -0.15            | ~2.0-3.0 low       |
+| Moderado            | 0.15          | -0.20            | ~3.0-4.0 low-mod   |
+
+Parámetros fijos para TODOS los tipos:
+  liquidity: "instant"
+  platform_regulated: true
   leverage: 1.0 (el leverage lo aplica el trader internamente)
+  weight_in_portfolio_pct: [peso real en el plan]
+```
 
-Esto debería dar un risk score de ~4-5 para traders agresivos.
+## Ejemplo de llamada (trader agresivo cripto+tech, peso 30%)
+```
+calculate_risk_score(
+  volatility_30d=0.25,
+  max_drawdown_12m=-0.30,
+  liquidity="instant",
+  platform_regulated=true,
+  weight_in_portfolio_pct=30,
+  leverage=1.0
+)
+→ Resultado esperado: ~4.5 "moderate"
+
+calculate_scenarios(
+  amount_usd=150,
+  expected_apy=0.25,
+  volatility_annual=0.30,
+  passive_income_annual_usd=0,
+  months=6,
+  leverage=1.0,
+  monthly_cost_usd=0
+)
+```
+
+## Gestión post-inversión
+```
+SEMANAL: revisar rendimiento del trader
+Si drawdown > 25%: evaluar salida
+Si inactivo > 2 semanas: considerar cambio
+Si rendimiento < 0% en 3 meses consecutivos: dejar de copiar
 ```
