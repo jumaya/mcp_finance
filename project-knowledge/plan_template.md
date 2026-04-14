@@ -1,8 +1,30 @@
-# Template del plan de inversión — v6
+# Template del plan de inversión — v6.1
 
-## Rendimiento mínimo por perfil (escenario BASE, 6 meses)
+## Rendimiento mínimo por perfil Y capital (escenario BASE, 6 meses)
 ```
-Bajo: +4-8% | Moderado: +10-20% | Alto: +30-60% | Extremo: +40-200%
+Los rendimientos mínimos dependen del capital invertido.
+Con capital bajo, las comisiones, spreads y overnight fees
+erosionan un porcentaje mayor del rendimiento bruto.
+
+RIESGO ALTO (7-10/10):
+  Capital < $200:   mínimo +15% base 6M
+  Capital $200-500:  mínimo +20% base 6M
+  Capital $500-2000: mínimo +30% base 6M
+  Capital > $2000:   mínimo +40% base 6M
+
+RIESGO MODERADO (4-6/10):
+  Capital < $500:   mínimo +8% base 6M
+  Capital $500+:    mínimo +12% base 6M
+
+RIESGO BAJO (1-3/10):
+  Todos los capitales: mínimo +4% base 6M
+
+SI el rendimiento base proyectado NO alcanza el mínimo:
+  → NO rechazar el plan
+  → Incluir nota honesta: "El rendimiento base de +X% está ajustado al capital
+    de $Y. Con mayor capital ($Z+) el rendimiento escala porque las comisiones
+    pesan menos proporcionalmente."
+  → NO decir "no alcanza el +30%" si el mínimo correcto es +20% para ese capital
 ```
 
 ## Límite defensivo (stablecoins + reserva + ETFs broad)
@@ -23,17 +45,12 @@ PROHIBIDO:
   - Agregar tabs adicionales (NO crear tab "Intel", "Fiscal", "Detalles", etc.)
   - Cambiar los nombres de los tabs
   - Reorganizar el orden
-
-Si hay información extra (earnings history, DEX volumes, trending cripto):
-  → Incluirla DENTRO del Tab 1 "Plan" como parte del contexto de mercado
-  → O NO incluirla si no es esencial para la decisión de inversión
 ```
 
 ## Contenido de cada tab
 
 ### Tab 1: "📊 Plan" — Todo el análisis y las posiciones
 ```
-Orden de secciones dentro del tab:
   1. Paso 1: Contexto de mercado (datos MCP con fuente)
   2. Paso 2: Asimetrías detectadas (2-3 máximo)
   3. Paso 3: Popular investors / Copy trading
@@ -48,13 +65,13 @@ Orden de secciones dentro del tab:
   Semana 2: Revisión y ajustes
   Semana 3: Refuerzo o nuevas entradas
   Semana 4: Evaluación y rebalanceo
-  
+
   INCLUIR: earnings dates de acciones en el portafolio como hitos
 ```
 
 ### Tab 3: "📈 Escenarios" — Tablas a 3M y 6M + honestidad sobre rendimiento
 ```
-  1. Nota de honestidad sobre rendimiento mensual objetivo vs realista
+  1. Nota de honestidad sobre rendimiento objetivo vs realista
   2. Tabla escenarios a 3 meses (optimista/base/pesimista con razones)
   3. Tabla escenarios a 6 meses (optimista/base/pesimista con razones)
   4. Impacto fiscal Colombia (resumen por tipo de activo)
@@ -66,7 +83,8 @@ Orden de secciones dentro del tab:
   2. Correlación entre posiciones
   3. Checks de validación (concentración, defensivo, tolerancia)
   4. Reglas de protección y triggers de salida
-  5. Disclaimers obligatorios
+  5. Costos totales desglosados
+  6. Disclaimers obligatorios
 ```
 
 ## REGLAS DE FORMATO NUMÉRICO
@@ -77,18 +95,15 @@ Risk scores — SIEMPRE mostrar como texto visible:
 
 Escenarios — SIEMPRE mostrar porcentaje Y monto:
   CORRECTO: "🟢 Optimista (25%): +80.0% → $315.00"
-  INCORRECTO: solo barra de color sin números
 
 Stress test — SIEMPRE diferenciar escenarios:
-  CORRECTO: Moderado $385 (-22.9%) vs Severo $270 (-46.0%)
-  INCORRECTO: mismo resultado para todos los escenarios
+  CORRECTO: Moderado $163 (-18%) vs Severo $113 (-43%)
 
 Overnight fees — SIEMPRE incluir en posiciones CFD:
   CORRECTO: "Overnight: ~$1.58/mes ($9.48 en 6M)"
-  
+
 Fuentes — SIEMPRE indicar:
   CORRECTO: "$72,182 (via CoinGecko)"
-  INCORRECTO: "$72,182" sin fuente
 ```
 
 ## Checklist de calidad (verificar ANTES de generar JSX)
@@ -102,10 +117,10 @@ Fuentes — SIEMPRE indicar:
 □ ¿Risk score como NÚMERO visible X.X/10?
 □ ¿Escenarios con % y $ en texto visible?
 □ ¿Overnight fees en posiciones CFD?
-□ ¿Stress test con escenarios diferenciados?
+□ ¿Stress test con escenarios diferenciados (verticales correctos)?
 □ ¿Copy trading incluido como posición (si eToro)?
 □ ¿Correlación calculada?
-□ ¿Rendimiento base ≥ mínimo del perfil?
+□ ¿Rendimiento base ≥ mínimo ajustado por capital?
 □ ¿% defensivo ≤ límite del perfil?
 □ ¿Checkpoints ✅ visibles?
 □ ¿Disclaimers al final?
