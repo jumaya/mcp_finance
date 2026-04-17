@@ -2,108 +2,139 @@
 
 ## REGLA: Si usa eToro + riesgo ≥ 5 → copy trading OBLIGATORIO como posición
 
-## Cómo obtener Popular Investors reales de eToro
-
-### Opción 1: Usar eToro MCP (search_e_toro_api_docs)
+## eToro MCP — Tools reales disponibles
 ```
-El eToro MCP oficial solo expone tools de documentación.
-EJECUTAR search_e_toro_api_docs para obtener info de endpoints.
-PERO NO puede consultar datos reales de traders.
-```
+El eToro MCP server (orkblutt) expone tools reales para consultar Popular Investors.
+USAR ESTAS TOOLS — no inventar datos ni dar solo nombres de referencia.
 
-### Opción 2: API REST directa de eToro (PREFERIDA)
-```
-La API de eToro tiene un endpoint REAL para buscar Popular Investors:
-
-ENDPOINT: GET https://public-api.etoro.com/api/v1/user-info/people/search
-
-PARÁMETROS CLAVE:
-  period: "LastYear" (rendimiento último año)
-  popularInvestor: true (solo Popular Investors)
-  sort: "-gain" (ordenar por mayor rendimiento)
-  maxDailyRiskScoreMin: 1
-  maxDailyRiskScoreMax: 7 (filtrar por riesgo)
-  page: 1
-  pageSize: 5
-  isTestAccount: false
-  blocked: false
-
-HEADERS REQUERIDOS:
-  x-api-key: [la API key del usuario]
-  x-user-key: [la user key del usuario]
-  x-request-id: [UUID único]
-
-EL AGENTE DEBE:
-  1. Indicar al usuario que puede consultar este endpoint directamente
-  2. Dar el comando curl exacto para que el usuario lo ejecute
-  3. Explicar los campos de respuesta relevantes
-
-COMANDO CURL PARA EL USUARIO:
-  curl -s "https://public-api.etoro.com/api/v1/user-info/people/search?period=LastYear&popularInvestor=true&sort=-gain&maxDailyRiskScoreMax=7&page=1&pageSize=5&isTestAccount=false" \
-    -H "x-api-key: TU_API_KEY" \
-    -H "x-user-key: TU_USER_KEY" \
-    -H "x-request-id: $(uuidgen)"
-
-CAMPOS DE RESPUESTA RELEVANTES:
-  userName: nombre del trader
-  gain: rendimiento en el período (ej: 0.45 = +45%)
-  riskScore: score de riesgo eToro (1-10)
-  copiers: número de copiadores
-  peakToValley: máximo drawdown (ej: -0.18 = -18%)
-  winRatio: porcentaje de trades ganadores
-  trades: número total de trades
-  profitableMonthsPct: % de meses rentables
-  topTradedAssetClassId: tipo de activo principal
+TOOLS DISPONIBLES:
+  discover_users        → buscar Popular Investors con filtros de rendimiento y riesgo
+  get_user_profile      → perfil completo de un trader
+  get_user_performance  → rendimiento histórico detallado
+  get_user_portfolio    → portafolio en vivo (qué tiene abierto)
+  search_instruments    → verificar si un activo está disponible en eToro
 ```
 
-### Endpoint de rendimiento por trader específico
+## Paso 3 del orquestador: Cómo ejecutar
+
+### 1. Buscar Popular Investors (EJECUTAR discover_users)
 ```
-Para verificar un trader conocido:
-  GET https://public-api.etoro.com/api/v1/user-info/people/{username}/gain
-  Devuelve rendimiento mensual y anual histórico detallado.
+EJECUTAR:
+  discover_users(
+    period="LastYear",
+    popularInvestor=true,
+    maxDailyRiskScoreMax=7,    ← ajustar según perfil de riesgo
+    pageSize=5
+  )
+
+PARA RIESGO ALTO:
+  discover_users(period="LastYear", popularInvestor=true, maxDailyRiskScoreMax=8, pageSize=5)
+
+PARA RIESGO MODERADO:
+  discover_users(period="LastYear", popularInvestor=true, maxDailyRiskScoreMax=5, pageSize=5)
+
+De la respuesta, extraer para cada trader:
+  userName → nombre del trader
+  gain → rendimiento (0.45 = +45%)
+  riskScore → score eToro 1-10
+  copiers → número de copiadores
+  peakToValley → drawdown máximo (-0.18 = -18%)
+  winRatio → % trades ganadores
+  profitableMonthsPct → % meses rentables
+  trades → total de trades
 ```
 
-### Endpoint de portafolio en vivo
+### 2. Verificar rendimiento detallado (EJECUTAR get_user_performance)
 ```
-Para ver las posiciones abiertas de un trader:
-  GET https://public-api.etoro.com/api/v1/user-info/people/{username}/portfolio/live
+Para los top 2-3 traders del paso anterior:
+  get_user_performance(username="nombre_del_trader")
+
+Esto da rendimiento mensual y anual histórico detallado.
+Buscar consistencia: ¿gana la mayoría de meses o tiene picos y caídas?
 ```
 
-## Presentación en el plan
+### 3. Ver portafolio actual (EJECUTAR get_user_portfolio)
+```
+Para confirmar que el trader está activo y qué opera:
+  get_user_portfolio(username="nombre_del_trader")
 
-### Si el usuario tiene API key y user key:
-```
-DAR el comando curl exacto adaptado a sus keys.
-Explicar: "Ejecuta este comando en tu terminal para ver los 5 mejores 
-Popular Investors del último año. Luego dime los resultados y te ayudo a seleccionar."
+Verificar:
+  → ¿Tiene posiciones abiertas? (si no, está inactivo)
+  → ¿Qué tipo de activos opera? (cripto, acciones, mixto)
+  → ¿Tiene posiciones apalancadas?
 ```
 
-### Si el usuario NO tiene user key:
+### 4. Verificar disponibilidad de activos (EJECUTAR search_instruments)
 ```
-1. Indicar: "Para consultar via API necesitas tu User Key.
-   Ve a https://api-portal.etoro.com/ → Gestión de claves API → Crear clave API"
-2. Dar criterios de búsqueda manual:
-   "En eToro → Descubrir → Popular Investors → Filtros: rendimiento >25%, riesgo 5-7"
-3. Nombres de referencia como fallback:
-   @JeppeKirkBonde, @jaynemesis, @crypto101_kevin (verificar rendimiento actual)
+Antes de recomendar un activo en eToro, verificar que existe:
+  search_instruments(query="CRM", exactSymbol=true)
+  search_instruments(query="Bitcoin")
+
+Si el instrumento no aparece → NO recomendar en eToro
+```
+
+## Formato de presentación (con datos reales del MCP)
+```
+👥 PASO 3 — POPULAR INVESTORS eTORO (via eToro MCP)
+
+Fuente: discover_users + get_user_performance (datos en tiempo real)
+
+1. @username1 | +XX% último año | Drawdown -XX% | Risk X/10 | Copiadores: X,XXX
+   Win ratio: XX% | Meses rentables: XX% | Trades: XXX
+   Portafolio: [cripto/tech/mixto] (via get_user_portfolio)
+   → Seleccionado porque: [razón basada en datos reales]
+
+2. @username2 | ...
+
+POSICIÓN RECOMENDADA:
+  Copiar @username1 con $XX y @username2 con $XX
+  Capital total copy trading: $XX (XX% del portafolio)
+```
+
+## SI el eToro MCP da error 401 (Unauthorized)
+```
+Esto significa que las API keys no están configuradas correctamente.
+El usuario debe verificar en claude_desktop_config.json:
+
+  "etoro-mcp": {
+    "command": "node",
+    "args": ["C:\\Proyectos\\eToro-MCP\\dist\\index.js"],
+    "env": {
+      "ETORO_API_KEY": "su_api_key_publica",
+      "ETORO_USER_KEY": "su_user_key_privada",
+      "ETORO_TRADING_MODE": "demo"
+    }
+  }
+
+SI el error persiste después de configurar:
+  → Indicar: "El eToro MCP devolvió error 401. Verifica tus API keys en Settings → Trading"
+  → Dar criterios de búsqueda manual como fallback:
+    "En eToro → Descubrir → Popular Investors → Filtros: rendimiento >25%, riesgo 5-7"
+  → Nombres de referencia: @JeppeKirkBonde, @jaynemesis (verificar rendimiento actual)
 ```
 
 ## Parámetros para calculate_risk_score por tipo de trader
 ```
-| Tipo de trader      | volatility_30d | max_drawdown_12m | Resultado esperado |
-|---------------------|---------------|------------------|--------------------|
-| Agresivo cripto     | 0.30          | -0.35            | ~4.5-5.5 moderate  |
-| Agresivo tech       | 0.25          | -0.30            | ~4.0-5.0 moderate  |
-| Mixto cripto+tech   | 0.25          | -0.30            | ~4.0-5.0 moderate  |
-| Conservador         | 0.10          | -0.15            | ~2.0-3.0 low       |
+DESPUÉS de obtener datos reales del trader via discover_users, usar:
+  volatility_30d: usar el riskScore del trader / 20 (ej: riskScore 6 → vol 0.30)
+  max_drawdown_12m: usar peakToValley del trader (ej: -0.25)
+  liquidity: "instant"
+  platform_regulated: true
+  leverage: 1.0
+  weight_in_portfolio_pct: [peso real]
 
-Parámetros fijos: liquidity="instant", platform_regulated=true, leverage=1.0
+SI no hay datos reales (fallback), usar tabla:
+  | Tipo de trader      | volatility_30d | max_drawdown_12m |
+  |---------------------|---------------|------------------|
+  | Agresivo cripto     | 0.30          | -0.35            |
+  | Mixto cripto+tech   | 0.25          | -0.30            |
+  | Conservador         | 0.10          | -0.15            |
 ```
 
 ## Gestión post-inversión
 ```
-SEMANAL: revisar rendimiento del trader
+SEMANAL: get_user_performance para revisar rendimiento del trader
 Si drawdown > 25%: evaluar salida
-Si inactivo > 2 semanas: considerar cambio
+Si inactivo (get_user_portfolio vacío): considerar cambio
 Si rendimiento < 0% en 3 meses: dejar de copiar
 ```
