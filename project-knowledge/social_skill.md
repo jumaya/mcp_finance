@@ -1,140 +1,217 @@
-# Skill: Copy trading — v7
+# social_skill.md — Copy Trading inteligente
 
-## REGLA: Si usa eToro + riesgo ≥ 5 → copy trading OBLIGATORIO como posición
+Instrucciones para el agente cuando el usuario expresa interés en
+**copy trading** o en **seguir popular investors** en eToro.
 
-## eToro MCP — Tools reales disponibles
+## Regla fundamental
+
+**NUNCA recomendar traders por nombre sin validar sus métricas con datos
+reales de la API.** Nombres como @JeppeKirkBonde o @jaynemesis son
+referencias iniciales útiles, pero toda sugerencia final debe apoyarse
+en los datos que devuelven las tools del MCP `etoro-server`.
+
+## Cuándo activar este skill
+
+Se activa cuando el usuario menciona:
+
+- "Copy trading", "copiar traders", "popular investors", "PI", "eToro social".
+- "¿A quién debería copiar?", "recomiéndame un trader".
+- Pregunta por retornos históricos de un usuario específico de eToro.
+- Diseño de cartera donde una porción va a "seguir a otros".
+
+## Flujo recomendado
+
+### Paso 1 — Entender el perfil del usuario
+
+Antes de buscar traders, el agente debe tener claro:
+
+- **Horizonte temporal** (corto/medio/largo).
+- **Tolerancia al riesgo** (conservador = risk score 1-4; moderado = 4-6;
+  agresivo = 6-8; nunca sugerir 9-10 sin advertencia fuerte).
+- **Monto a destinar** a copy trading dentro del portfolio total.
+- **Mercados preferidos** (acciones, cripto, forex, diversificado).
+
+Si algo no está claro, el agente **pregunta una sola cosa por mensaje**
+antes de buscar.
+
+### Paso 2 — Ver el portfolio actual del usuario (si hay contexto)
+
+Si el usuario ya tiene cuenta eToro conectada al MCP, llamar
+`get_portfolio` primero para saber:
+
+- Cuánto `credit` (cash libre) tiene disponible para asignar.
+- Si ya tiene `mirrors` (copias activas) — no sugerir duplicar un trader
+  que ya está copiando.
+- Qué `positions` manuales tiene — evitar sugerir traders cuyo
+  `topTradedInstrumentId` solape mucho con lo que el usuario ya opera
+  directamente (redundancia de exposición).
+
+### Paso 3 — Descubrir candidatos con `discover_popular_investors`
+
+Llamar con filtros coherentes al perfil del usuario. **No pasar todos
+los filtros de golpe**; la API puede fallar con combinaciones. Patrón
+probado que funciona:
+
+**Conservador (risk 1-4):**
 ```
-El eToro MCP server (orkblutt) expone tools reales para consultar Popular Investors.
-USAR ESTAS TOOLS — no inventar datos ni dar solo nombres de referencia.
-
-TOOLS DISPONIBLES:
-  discover_users        → buscar Popular Investors con filtros de rendimiento y riesgo
-  get_user_profile      → perfil completo de un trader
-  get_user_performance  → rendimiento histórico detallado
-  get_user_portfolio    → portafolio en vivo (qué tiene abierto)
-  search_instruments    → verificar si un activo está disponible en eToro
-```
-
-## Paso 3 del orquestador: Cómo ejecutar
-
-### 1. Buscar Popular Investors (EJECUTAR discover_users)
-```
-EJECUTAR:
-  discover_users(
-    period="LastYear",
-    popularInvestor=true,
-    maxDailyRiskScoreMax=7,    ← ajustar según perfil de riesgo
-    pageSize=5
-  )
-
-PARA RIESGO ALTO:
-  discover_users(period="LastYear", popularInvestor=true, maxDailyRiskScoreMax=8, pageSize=5)
-
-PARA RIESGO MODERADO:
-  discover_users(period="LastYear", popularInvestor=true, maxDailyRiskScoreMax=5, pageSize=5)
-
-De la respuesta, extraer para cada trader:
-  userName → nombre del trader
-  gain → rendimiento (0.45 = +45%)
-  riskScore → score eToro 1-10
-  copiers → número de copiadores
-  peakToValley → drawdown máximo (-0.18 = -18%)
-  winRatio → % trades ganadores
-  profitableMonthsPct → % meses rentables
-  trades → total de trades
-```
-
-### 2. Verificar rendimiento detallado (EJECUTAR get_user_performance)
-```
-Para los top 2-3 traders del paso anterior:
-  get_user_performance(username="nombre_del_trader")
-
-Esto da rendimiento mensual y anual histórico detallado.
-Buscar consistencia: ¿gana la mayoría de meses o tiene picos y caídas?
-```
-
-### 3. Ver portafolio actual (EJECUTAR get_user_portfolio)
-```
-Para confirmar que el trader está activo y qué opera:
-  get_user_portfolio(username="nombre_del_trader")
-
-Verificar:
-  → ¿Tiene posiciones abiertas? (si no, está inactivo)
-  → ¿Qué tipo de activos opera? (cripto, acciones, mixto)
-  → ¿Tiene posiciones apalancadas?
-```
-
-### 4. Verificar disponibilidad de activos (EJECUTAR search_instruments)
-```
-Antes de recomendar un activo en eToro, verificar que existe:
-  search_instruments(query="CRM", exactSymbol=true)
-  search_instruments(query="Bitcoin")
-
-Si el instrumento no aparece → NO recomendar en eToro
+discover_popular_investors(
+  period="OneYearAgo",
+  page_size=10,
+  popular_investor=True,
+  max_monthly_risk_score_max=4,
+  min_weeks_since_registration=104   # 2+ años
+)
 ```
 
-## Formato de presentación (con datos reales del MCP)
+**Moderado (risk 4-6):**
 ```
-👥 PASO 3 — POPULAR INVESTORS eTORO (via eToro MCP)
-
-Fuente: discover_users + get_user_performance (datos en tiempo real)
-
-1. @username1 | +XX% último año | Drawdown -XX% | Risk X/10 | Copiadores: X,XXX
-   Win ratio: XX% | Meses rentables: XX% | Trades: XXX
-   Portafolio: [cripto/tech/mixto] (via get_user_portfolio)
-   → Seleccionado porque: [razón basada en datos reales]
-
-2. @username2 | ...
-
-POSICIÓN RECOMENDADA:
-  Copiar @username1 con $XX y @username2 con $XX
-  Capital total copy trading: $XX (XX% del portafolio)
+discover_popular_investors(
+  period="OneYearAgo",
+  page_size=10,
+  popular_investor=True,
+  max_monthly_risk_score_max=6,
+  min_weeks_since_registration=52    # 1+ año
+)
 ```
 
-## SI el eToro MCP da error 401 (Unauthorized)
-```
-Esto significa que las API keys no están configuradas correctamente.
-El usuario debe verificar en claude_desktop_config.json:
+**Agresivo:** igual al moderado pero subiendo `max_monthly_risk_score_max`
+a 7 como tope absoluto, nunca más.
 
-  "etoro-mcp": {
-    "command": "node",
-    "args": ["C:\\Proyectos\\eToro-MCP\\dist\\index.js"],
-    "env": {
-      "ETORO_API_KEY": "su_api_key_publica",
-      "ETORO_USER_KEY": "su_user_key_privada",
-      "ETORO_TRADING_MODE": "demo"
-    }
-  }
+**Si un filtro hace que la API devuelva 404** (error "An error has
+occurred."), quitar ese filtro y reintentar. Los filtros opcionales son
+frágiles en combinación — es preferible traer más resultados y filtrar
+en post-proceso.
 
-SI el error persiste después de configurar:
-  → Indicar: "El eToro MCP devolvió error 401. Verifica tus API keys en Settings → Trading"
-  → Dar criterios de búsqueda manual como fallback:
-    "En eToro → Descubrir → Popular Investors → Filtros: rendimiento >25%, riesgo 5-7"
-  → Nombres de referencia: @JeppeKirkBonde, @jaynemesis (verificar rendimiento actual)
+### Paso 4 — Rankear por métricas objetivas, no por ganancia pura
+
+La API ordena por `copiers` por defecto. El agente debe **rerankear**
+los candidatos aplicando este criterio compuesto:
+
+**Métricas que importan (del response de `discover_popular_investors` o
+`get_user_performance`):**
+
+| Métrica | Lectura | Peso sugerido |
+|---|---|---|
+| `gain` | Ganancia del período. Más alto mejor, pero no es lo único. | 30% |
+| `profitableMonthsPct` | % de meses en verde. >70% es excelente. | 20% |
+| `peakToValley` | Máximo drawdown. Menor (más cercano a 0) mejor. | 20% |
+| `winRatio` | % de trades ganadores. >60% es bueno. | 10% |
+| `weeksSinceRegistration` | Experiencia. >104 semanas (2 años) preferible. | 10% |
+| `copiers` | Validación social. >1000 ya es señal. | 10% |
+
+**Señales de descarte inmediato:**
+
+- `maxMonthlyRiskScore > 7` si el usuario es conservador o moderado.
+- `highLeveragePct > 20` (usa apalancamiento agresivo con frecuencia).
+- `peakToValley < -30` (drawdown histórico mayor a 30%).
+- `weeksSinceRegistration < 26` (menos de 6 meses, track record insuficiente).
+
+### Paso 5 — Profundizar en los 2-3 finalistas con `get_user_performance`
+
+Para cada candidato corto, llamar `get_user_performance` con múltiples
+periodos para verificar **consistencia**, no solo buen rendimiento
+reciente:
+
+```
+get_user_performance(username="Xxx", period="OneYearAgo")
+get_user_performance(username="Xxx", period="LastTwoYears")
+get_user_performance(username="Xxx", period="CurrYear")
 ```
 
-## Parámetros para calculate_risk_score por tipo de trader
-```
-DESPUÉS de obtener datos reales del trader via discover_users, usar:
-  volatility_30d: usar el riskScore del trader / 20 (ej: riskScore 6 → vol 0.30)
-  max_drawdown_12m: usar peakToValley del trader (ej: -0.25)
-  liquidity: "instant"
-  platform_regulated: true
-  leverage: 1.0
-  weight_in_portfolio_pct: [peso real]
+Un trader con +80% en 1 año pero -10% promedio en 2 años **no es
+confiable** — solo tuvo suerte. Preferir consistencia (+20% anual
+sostenido) sobre picos recientes.
 
-SI no hay datos reales (fallback), usar tabla:
-  | Tipo de trader      | volatility_30d | max_drawdown_12m |
-  |---------------------|---------------|------------------|
-  | Agresivo cripto     | 0.30          | -0.35            |
-  | Mixto cripto+tech   | 0.25          | -0.30            |
-  | Conservador         | 0.10          | -0.15            |
-```
+### Paso 6 — Presentar con datos, no con adjetivos
 
-## Gestión post-inversión
-```
-SEMANAL: get_user_performance para revisar rendimiento del trader
-Si drawdown > 25%: evaluar salida
-Si inactivo (get_user_portfolio vacío): considerar cambio
-Si rendimiento < 0% en 3 meses: dejar de copiar
-```
+Al usuario se le muestra una tabla comparativa con las métricas clave,
+**no una recomendación única**. Ejemplo:
+
+> Basado en tu perfil moderado, estos son los 3 candidatos con mejores
+> métricas de los últimos 12 meses:
+>
+> | Trader | Ganancia | Risk | Drawdown máx | Meses verdes | Copiers | Años |
+> |---|---|---|---|---|---|---|
+> | @X | +45% | 5 | -12% | 84% | 25K | 12 |
+> | @Y | +38% | 4 | -9% | 78% | 15K | 9 |
+> | @Z | +52% | 6 | -18% | 69% | 33K | 6 |
+>
+> @X destaca en consistencia (84% de meses en verde, drawdown bajo).
+> @Y es la opción más conservadora (risk 4, drawdown menor).
+> @Z tiene el mayor retorno pero también el mayor riesgo.
+>
+> ¿Con cuál quieres profundizar? Puedo traer su portfolio actual y
+> las últimas operaciones.
+
+### Paso 7 — Advertencias obligatorias antes de cualquier acción
+
+Antes de que el usuario decida copiar a alguien, el agente **siempre**
+recuerda:
+
+1. Rendimiento pasado no garantiza futuro.
+2. Mínimo recomendado de copy en eToro suele ser $200 USD.
+3. Se puede configurar `stopLossPercentage` al abrir el copy (el agente
+   sugiere 15-25% según risk score del trader).
+4. El MCP actual es **solo lectura** — el usuario ejecuta la copia él
+   mismo desde la plataforma eToro.
+5. Si la clave es `real` Read-only, Claude puede ver el portfolio pero
+   no puede abrir copies automáticamente (por diseño, es una decisión
+   de seguridad del setup).
+
+## Qué NO hacer
+
+- ❌ Sugerir traders sin haber llamado `get_user_performance` para ver
+  sus métricas reales.
+- ❌ Usar nombres hardcodeados como referencias definitivas. Son solo
+  punto de partida para que el usuario sepa de qué estamos hablando.
+- ❌ Basar la recomendación solo en `gain` anual. Alto retorno con alto
+  drawdown es peor que retorno moderado estable.
+- ❌ Pasar todos los filtros de `discover_popular_investors` juntos —
+  algunos combinan mal y rompen el endpoint.
+- ❌ Asumir que el usuario puede copiar un trader desde Claude. El MCP
+  no ejecuta escritura. Darle instrucciones para hacerlo manualmente
+  en eToro.
+- ❌ Dar consejo financiero categórico. Presentar datos y dejar la
+  decisión al usuario.
+
+## Contexto técnico para el agente
+
+- **Tools disponibles del MCP `etoro-server`:**
+  - `get_portfolio` — cartera personal + cash libre + mirrors actuales.
+  - `discover_popular_investors` — descubrir candidatos (frágil con
+    filtros compuestos; empezar simple).
+  - `get_user_performance` — métricas detalladas de un trader específico.
+  - `search_instruments`, `get_rates`, `get_candles` — para analizar
+    los activos que los traders están operando (cruce con
+    `topTradedInstrumentId`).
+
+- **`aumTierDesc`** indica el tamaño del capital que maneja el trader:
+  `<$10K`, `$10K-$100K`, `$100K-$1M`, `$1M-$5M`, `$5M+`. Preferir
+  `$1M+` para señal de confianza institucional.
+
+- **`topTradedAssetId`**: 5 = acciones, 6 = ETFs, 10 = cripto, 11 = forex.
+  Útil para matchear con preferencia del usuario.
+
+- **`isFund: true`** marca Smart Portfolios / fondos gestionados, que
+  tienen dinámica distinta al copy de un trader individual. Mencionarlo
+  explícitamente si aparece.
+
+## Ejemplo de conversación ideal
+
+> **Usuario:** Tengo $1000 y quiero copy trading conservador.
+>
+> **Agente:** [llama get_portfolio para ver si ya tiene algo]
+> [llama discover_popular_investors con risk ≤ 4]
+> [selecciona 3 finalistas, llama get_user_performance a cada uno con
+>  OneYearAgo y LastTwoYears para ver consistencia]
+> [presenta tabla comparativa con las 6 métricas, pregunta con cuál
+>  profundizar]
+>
+> **Usuario:** Cuéntame más de @X.
+>
+> **Agente:** [llama get_user_performance(@X, "LastTwoYears")]
+> [muestra que su `topTradedInstrumentId` es el 1971, llama
+>  search_instruments para identificarlo, llama get_rates para
+>  ver precio actual]
+> [resume, recuerda advertencias, explica que para copiarlo debe
+>  ir a eToro.com/people/X directamente]
