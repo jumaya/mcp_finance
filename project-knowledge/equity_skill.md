@@ -1,4 +1,4 @@
-# Skill: Acciones y ETFs — v7
+# Skill: Acciones y ETFs — v8
 
 ## Activos por riesgo
 ```
@@ -137,6 +137,108 @@ No ocultes la restricción — es información útil:
 > operable en este momento). Lo reemplacé por NOW, que tiene perfil
 > similar (SaaS enterprise, volatilidad ~0.30). NOW sí pasó el gate."
 
+## Extracción de datos de `yfinance_get_ticker_info` (obligatorio)
+
+**Contexto crítico:** no existe una tool dedicada tipo `get_earnings` en
+el MCP de yahoo-finance. Toda la información de earnings, consenso de
+analistas y momentum viene **dentro del payload de `ticker_info`**. El
+agente debe extraer explícitamente estos campos — no basta con llamar
+la tool y resumir "en general".
+
+### Campos obligatorios a extraer y presentar
+
+| Campo JSON                    | Qué es                             | Cuándo mostrar |
+|-------------------------------|------------------------------------|----------------|
+| `earningsTimestampStart`      | Próximo earnings — inicio ventana  | SIEMPRE        |
+| `earningsTimestampEnd`        | Próximo earnings — fin ventana     | SIEMPRE        |
+| `isEarningsDateEstimate`      | `true` = no confirmada por empresa | SIEMPRE        |
+| `earningsQuarterlyGrowth`     | Crecimiento EPS YoY último Q       | SIEMPRE        |
+| `targetMeanPrice`             | Precio objetivo medio analistas    | SIEMPRE        |
+| `currentPrice`                | Precio actual                      | SIEMPRE        |
+| `recommendationKey`           | Consenso ("buy"/"hold"/"sell")     | SIEMPRE        |
+| `numberOfAnalystOpinions`     | Nº de analistas cubriendo          | SIEMPRE        |
+| `52WeekChange`                | Retorno 52 semanas acción          | SIEMPRE        |
+| `SandP52WeekChange`           | Retorno 52 semanas S&P (benchmark) | SIEMPRE        |
+| `fiftyDayAverage`             | SMA 50 (momentum corto)            | Opcional       |
+| `twoHundredDayAverage`        | SMA 200 (tendencia larga)          | Opcional       |
+| `earningsTimestamp`           | Último earnings reportado          | Opcional       |
+| `earningsCallTimestampStart`  | Earnings call (si aplica)          | Opcional       |
+
+### Formato de presentación
+
+**Earnings:**
+- Si `earningsTimestampStart == earningsTimestampEnd`:
+  `"Próximo earnings: <dd-mm-yyyy> (estimada)" ` o `"(confirmada)"`
+  según `isEarningsDateEstimate`.
+- Si son distintos (ventana):
+  `"Próximo earnings: entre <start> y <end> (estimada|confirmada)"`.
+- Convertir el timestamp a formato es-CO (dd-mm-yyyy).
+- Si `isEarningsDateEstimate == true` → añadir literal:
+  "(estimada por Yahoo, no confirmada por la empresa)".
+
+**Consenso analistas:**
+- `"Consenso <N> analistas: <recommendationKey>. Target medio
+  $<targetMeanPrice> vs actual $<currentPrice> (<upside>%)"`.
+
+**Momentum relativo:**
+- `"52W: <52WeekChange>% vs S&P <SandP52WeekChange>% → <outperform|underperform> por <diff> pts"`.
+
+### Si los campos no están en el payload
+
+No inventar. Literal:
+> "Fecha de earnings no disponible vía Yahoo Finance para <TICKER>.
+> Consultar directamente en investor.<empresa>.com."
+
+**Prohibido:** frases vagas tipo *"Earnings season Q1 2026"*,
+*"reporta en mayo"*, *"próximo trimestre"*. Violan el principio #1
+del `system.md` (nunca inventes números).
+
+### Por qué importa para el plan
+
+Un earnings en < 30 días con CFD leverage ≥ 2x es un **evento binario
+material**. Un reporte con guidance débil puede mover la acción -10%
+intraday, que con 2x se convierte en -20% sobre la posición.
+
+Añadir SIEMPRE al plan, en la sección de riesgos del ticker:
+> "Earnings el <fecha>: evento binario. Considerar cerrar o reducir
+> posición 24-48h antes si no hay apetito por gap overnight."
+
+### Ejemplo real (CRM, validado 18-abr-2026)
+
+Payload real de `yfinance_get_ticker_info("CRM")`:
+```json
+{
+  "earningsTimestampStart": "2026-05-27 15:00:00",
+  "earningsTimestampEnd":   "2026-05-27 15:00:00",
+  "isEarningsDateEstimate": true,
+  "earningsQuarterlyGrowth": 0.138,
+  "currentPrice": 182.14,
+  "targetMeanPrice": 268.87,
+  "recommendationKey": "buy",
+  "numberOfAnalystOpinions": 52,
+  "52WeekChange": -0.229,
+  "SandP52WeekChange": 0.3815,
+  "fiftyDayAverage": 188.0,
+  "twoHundredDayAverage": 232.75
+}
+```
+
+**Salida correcta al usuario:**
+> - Próximo earnings: **27-05-2026** (estimada por Yahoo, no confirmada).
+> - Último Q: +13.8% crecimiento EPS YoY.
+> - Consenso 52 analistas: **buy**. Target medio $268.87 vs actual
+>   $182.14 → upside +47.6%.
+> - 52W: -22.9% vs S&P +38.2% → underperform -61 pts (CRM en drawdown
+>   fuerte relativo al mercado).
+> - Precio bajo SMA50 ($188) y SMA200 ($232.75) → momentum bearish.
+> - Si la posición CFD 2x sigue abierta el 26-05, considerar reducir
+>   antes del reporte.
+
+**Salida incorrecta (NO hacer):**
+- ❌ "Earnings season Q1 2026: monitorear si CRM reporta"
+- ❌ "CRM reporta en mayo"
+- ❌ "Los analistas son positivos"
+
 ## Tool calls obligatorios
 ```
 POR CADA acción candidata (en este ORDEN):
@@ -146,7 +248,11 @@ POR CADA acción candidata (en este ORDEN):
      → si no pasa, DESCARTAR y no seguir con esta candidata
 
   1. Alpha Vantage → precio, RSI, MACD, SMA50, SMA200
-  2. Yahoo Finance → earnings date
+  2. Yahoo Finance → yfinance_get_ticker_info(symbol="<TICKER>")
+     → extraer TODOS los campos obligatorios de la sección
+       "Extracción de datos de ticker_info" (earnings + consenso
+       analistas + momentum relativo al S&P). No basta con llamar
+       la tool; hay que LEER el payload y presentar los campos.
   3. TradingView → señal técnica
   4. calculate_risk_score(vol_tabla, dd_tabla, "instant", true, peso, leverage)
   5. calculate_scenarios(monto, apy, vol_tabla, 0, meses, leverage, monthly_cost)
@@ -157,3 +263,8 @@ POR CADA acción candidata (en este ORDEN):
 **Invariante:** los pasos 1-7 nunca se ejecutan sobre un ticker que
 falló el paso 0. Si lo haces, estás quemando llamadas de API en algo
 que el usuario no puede operar.
+
+**Invariante earnings:** si el paso 2 se ejecutó pero la respuesta al
+usuario no contiene una fecha concreta de earnings (o la nota
+"no disponible vía Yahoo Finance"), el paso 2 no está completo.
+Volver a leer el payload.
