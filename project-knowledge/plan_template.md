@@ -55,7 +55,7 @@ PROHIBIDO:
   2. Paso 2: Asimetrías detectadas (2-3 máximo)
   3. Paso 3: Popular investors / Copy trading
   4. Paso 4: Las 3 posiciones con detalle completo
-    Para CADA posición direccional, incluir bloque "Setup técnico"(proveniente de technical_skill.md):
+    Para CADA posición direccional, incluir bloque "Setup técnico" (proveniente de technical_skill.md):
     - Postura (BULLISH/NEUTRAL/BEARISH/sin señal clara)
     - Patrón identificado + divergencias
     - Entrada / SL / TP1 / TP2 con justificación de cada nivel
