@@ -108,6 +108,13 @@ Tab 4: "⚠️ Riesgo" — Stress test + validación + disclaimers
 4. Reglas de protección y triggers de salida
 5. Costos totales desglosados
 6. Disclaimers obligatorios
+7. BASELINE DE SEGUIMIENTO (bloque JSON para la próxima revisión)
+   - Schema completo en tracking_skill.md §Schema del BASELINE DE SEGUIMIENTO.
+   - Todos los campos rellenos desde cálculos reales, NUNCA inventados.
+   - Va en bloque ```json al final del tab, copiable de un click.
+   - Precedido por una nota al usuario: "Guarda este bloque. Cuando quieras
+     que revise cómo va tu portafolio, escríbeme 'revisa mi portafolio' y
+     pégame este JSON."
 
 
 REGLAS DE FORMATO NUMÉRICO
@@ -159,3 +166,6 @@ Checklist de calidad (verificar ANTES de generar JSX)
 □ ¿El R:R técnico por posición es ≥ 1:1.5 (equity/cripto) o ≥ 1:2 (forex)? Si alguna posición queda por debajo, ¿está marcada explícitamente?
 □ ¿La modulación del cronograma (Tab 2) refleja la postura técnica? (Bullish → entrada Semana 1; Neutral → 50/50 S1-S2; Bearish → 33/resto condicionado)
 □ ¿Los SL técnicos aparecen también en el Tab 4 como triggers de salida?
+□ ¿El Tab 4 incluye el bloque BASELINE DE SEGUIMIENTO en JSON con todos los campos del schema de tracking_skill.md?
+□ ¿Todos los campos del BASELINE vienen de cálculos reales de las tools (pesos de allocate_portfolio, SL/TP de technical_skill, risk scores calculados, fechas de catalizadores de yfinance)?
+□ ¿Hay un recordatorio al usuario indicando que guarde el bloque y lo pegue con "revisa mi portafolio" en la próxima sesión?

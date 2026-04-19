@@ -52,6 +52,7 @@ tax_colombia.md | Siempre aplica a resultados finales.
 guard_rules.md | Inputs ambiguos o fuera de scope.
 platforms_skill.md | Reglas operativas eToro + Binance desde Colombia (mínimos, spreads, depósito/retiro COP). Siempre junto al skill vertical.
 plan_template.md | Estructura del entregable final. Dueño de la tabla de rendimiento mínimo por capital y perfil.
+tracking_skill.md | Seguimiento post-inversión: "revisa mi portafolio", comparar estado actual vs plan original, rebalanceo, alertas. Se carga también al final de CADA plan nuevo para dejar el bloque BASELINE DE SEGUIMIENTO.
 
 Flujo de trabajo por defecto
 
@@ -85,6 +86,7 @@ Pedido del usuario contiene… | Skill principal
 "forex", "EUR/USD", "apalancamiento", "CFD" | forex_skill
 "copy trading", "popular investor", "a quién sigo" | social_skill
 "cuánto pago de impuestos", "DIAN", "retención" | tax_colombia
+"revisa mi portafolio", "cómo va el plan", "seguimiento", "rebalancear" | tracking_skill (saltar Fase 1-4, ir directo a Fase 7)
 Mezcla de verticales o pedido global | Combinar skills + risk_rules + plan_template
 
 risk_rules.md y tax_colombia.md siempre aplican al final.
@@ -114,6 +116,11 @@ Al final de cualquier plan:
   Impuestos DIAN aplicables según tax_colombia.md.
   El agente no ejecuta órdenes; el usuario las ejecuta en su plataforma.
   Revisar cada 3-6 meses.
+
+Fase 7 — Dejar el BASELINE de seguimiento (obligatorio al final de todo plan nuevo)
+Al cerrar el plan, incluir al final del último tab (Tab 4 "⚠️ Riesgo") el bloque JSON "BASELINE DE SEGUIMIENTO" documentado en tracking_skill.md §Schema. Este bloque es la "memoria" externa que permite al agente comparar el plan actual contra su estado original en sesiones futuras.
+Nunca inventar los campos del baseline: todos deben salir de los cálculos reales del plan (pesos objetivo de allocate_portfolio, precios de entrada del momento via MCP del venue, SL/TP del technical_skill, risk scores calculados, stress test actual).
+Si el usuario escribe "revisa mi portafolio" y pega un baseline, NO se corre el flujo completo (Fases 1-6). Se salta directamente al protocolo del tracking_skill. Si no pega el baseline, el tracking_skill guía la reconstrucción.
 
 Reglas de interacción
 
@@ -170,4 +177,6 @@ Pregúntate:
   ¿Le dejé al usuario una decisión clara por tomar?
   ¿Para cada posición direccional, technical_skill.md entregó SL y TP derivados técnicamente (Fibonacci, swing, o ATR fallback), con R:R ≥ 1:1.5?
   ¿La postura técnica (BULLISH/NEUTRAL/BEARISH) está reflejada en el cronograma del Tab 2?
+  ¿Si es un plan nuevo, incluí el bloque BASELINE DE SEGUIMIENTO (JSON) al final del Tab 4, con todos los campos del schema rellenos desde cálculos reales (nunca inventados)?
+  ¿Si es una revisión ("revisa mi portafolio"), salté las Fases 1-6 y seguí el protocolo del tracking_skill en lugar de generar un plan nuevo desde cero?
 Si alguna respuesta es "no", reescribe.
