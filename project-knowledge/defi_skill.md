@@ -1,10 +1,52 @@
-# Skill: Agente de cripto, staking y DeFi
+# Skill: Agente de cripto, staking y DeFi — v2
 
 ## Cuándo se activa
 Automáticamente cuando:
 - El allocate_portfolio asigna capital a "defi"
 - El usuario menciona cripto, staking, yield, DeFi, Binance, Ethereum, Bitcoin
 - El plan necesita una posición de rendimiento en dólares estables
+
+## 🚪 Gate de disponibilidad eToro (para cripto spot en eToro)
+
+**Cuándo aplica:** solo si el plan propone **comprar cripto vía eToro**
+(no aplica a posiciones nativas en Binance, Aave, Lido, MetaMask, etc.).
+
+eToro tiene restricciones fuertes de cripto por jurisdicción: desde
+Colombia, muchos tokens listados en otras regiones **no son operables**.
+Antes de sugerir comprar BTC/ETH/SOL/cualquier token en eToro, pasar
+el gate.
+
+### Protocolo
+```
+POR CADA token que se vaya a operar EN eToro:
+
+  etoro-server.search_instruments(
+    query="<SYMBOL>",        # ej. "BTC", "ETH", "SOL"
+    search_by="internalSymbolFull",
+    page_size=5
+  )
+
+Validar en el primer resultado cuyo symbol coincida:
+
+  ✅ instrumentType == "Crypto"
+  ✅ isCurrentlyTradable == true
+  ✅ isBuyEnabled == true
+
+Si falla:
+  → el token NO se puede comprar en eToro desde esta cuenta
+  → sugerir la alternativa nativa (Binance Simple Earn, CEX regulado)
+  → O reemplazar por un token equivalente que sí pase el gate
+  → informar al usuario del cambio y la razón
+```
+
+### Cuándo el gate NO aplica
+- Posiciones en Binance (CEX separado, universo distinto).
+- Staking / lending on-chain (Aave, Lido, Ethena) — ahí la disponibilidad
+  depende del protocolo y la red, no de eToro.
+- Recomendaciones puramente educativas sin propuesta de compra concreta.
+
+Si el plan es híbrido (ej. "parte en eToro, parte en Binance"), el gate
+solo corre sobre la porción eToro.
 
 ## Lógica de decisión autónoma
 
@@ -68,7 +110,7 @@ SI APY de un pool > 25%:
 SI APY > 50%:
   → NO recomendar para perfiles moderados
   → Para agresivos: solo con warning explícito y máximo 5% del capital
-  
+
 SI APY > 100%:
   → NO recomendar NUNCA — probable ponzi o incentivos insostenibles
 ```
@@ -83,6 +125,10 @@ SI APY > 100%:
 - ETH: precio actual, cambio 24h/7d/30d
 - SOL: precio actual
 - USDC: verificar que mantiene paridad ($1 ± $0.01)
+
+### eToro (solo si se opera en eToro)
+- Pasar el gate de arriba
+- `get_rates(instrument_ids=[...])` para el precio en eToro (puede diferir del spot)
 
 ## Estrategias disponibles (ordenadas por riesgo)
 
@@ -119,6 +165,7 @@ SI APY > 100%:
 - **NUNCA recomendar a principiantes**
 
 ## Cálculos obligatorios por posición
+0. Si se opera en eToro → **Gate eToro** (arriba) antes de seguir
 1. `calculate_scenarios` con APY y volatilidad del activo
 2. `calculate_risk_score` — para stablecoins: vol=0.01, dd=-0.02. Para ETH: vol=0.15, dd=-0.35
 3. `calculate_tax_impact("crypto_staking", annual_income)` o `("defi_yield", annual_income)`
@@ -134,7 +181,7 @@ SI nivel 1 (Binance Simple Earn):
 
 SI nivel 2 (ETH staking en Binance):
   Igual que nivel 1 pero: Convertir a ETH → Earn > ETH Staking
-  
+
 SI nivel 2 (Lido directo):
   Día 5: Instalar MetaMask, enviar ETH desde Binance
   Día 5: Ir a stake.lido.fi, conectar wallet, stakear
@@ -160,3 +207,5 @@ SI avanzado:
 - Tokens que debas comprar para "entrar" al pool
 - Protocolos sin auditorías verificables
 - Cualquier cosa que requiera "invitar amigos" para ganar más
+- Tokens que no pasan el gate eToro si el plan los sitúa en eToro
+  (no "truquear" moviéndolos a otro venue sin avisar al usuario)

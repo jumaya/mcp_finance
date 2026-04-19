@@ -1,10 +1,46 @@
-# Skill: Agente de Forex y CFDs
+# Skill: Agente de Forex y CFDs — v2
 
 ## Cuándo se activa
 Este skill se activa cuando:
 - El allocate_portfolio asigna capital a "forex"
 - El usuario menciona forex, divisas, trading, pares, EUR/USD, apalancamiento
 - NUNCA se activa como primera recomendación para principiantes
+
+## 🚪 Gate de disponibilidad eToro (para pares/CFDs operados en eToro)
+
+**Cuándo aplica:** solo si el plan propone operar en eToro (no aplica a
+Capital.com, XTB, Pepperstone, MetaTrader con otro broker).
+
+Algunos pares y CFDs sobre commodities (p.ej. XAU/USD) pueden no estar
+disponibles para cuentas retail desde Colombia, o estar deshabilitados
+temporalmente por condiciones de mercado.
+
+### Protocolo
+```
+POR CADA par/CFD que se vaya a operar EN eToro:
+
+  etoro-server.search_instruments(
+    query="<SYMBOL>",         # ej. "EURUSD", "GBPUSD", "XAUUSD"
+    search_by="internalSymbolFull",
+    page_size=5
+  )
+
+Validar en el primer resultado cuyo symbol coincida:
+
+  ✅ instrumentType ∈ {"Currencies", "Commodities"}
+  ✅ isCurrentlyTradable == true
+  ✅ isBuyEnabled == true   (o validar según dirección de la operación)
+
+Si falla:
+  → par NO operable en eToro para esta cuenta
+  → opción 1: sugerir otro broker de la tabla (Capital.com es la mejor
+    alternativa desde Colombia por depósito PSE)
+  → opción 2: reemplazar por un par líquido equivalente que sí pase
+  → informar al usuario antes de continuar
+```
+
+Si el usuario ya eligió broker **distinto de eToro**, este gate no
+aplica — usar los datos del broker correspondiente.
 
 ## Lógica de decisión autónoma
 
@@ -63,7 +99,7 @@ SIEMPRE: stop loss + TP1 (1:2 R:R) + TP2 (1:3 R:R) | verificar calendario econó
 ## Plataformas y selección automática
 ```
 SI no tiene cuenta forex → Capital.com (PSE directo, más fácil en CO)
-SI ya tiene eToro → usar eToro
+SI ya tiene eToro → usar eToro (pero pasar gate de disponibilidad)
 SI quiere MetaTrader → Pepperstone o XTB
 ```
 
@@ -83,6 +119,7 @@ SI quiere MetaTrader → Pepperstone o XTB
 | XAU/USD | 2-4 | Media-alta | NY 8am-5pm ET | Cobertura, movimientos fuertes |
 
 ## Cálculos obligatorios
+0. Si se opera en eToro → **Gate eToro** (arriba) antes de seguir
 1. `calculate_position_size(capital, risk_pct, entry, stop, leverage)` — OBLIGATORIO
 2. `calculate_scenarios(amount, apy=0, volatility=0.15, passive=0, months)`
 3. `calculate_risk_score(volatility, drawdown=-0.15, "instant", True, weight)`

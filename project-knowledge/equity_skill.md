@@ -1,4 +1,4 @@
-# Skill: Acciones y ETFs — v6
+# Skill: Acciones y ETFs — v7
 
 ## Activos por riesgo
 ```
@@ -9,6 +9,9 @@ ALTO: NVDA, TSLA, AMD, COIN, MSTR, PLTR, SOFI, RIOT, MARA, SNOW, NOW, INTU, CRM
 MODERADO: QQQ, XLK, AAPL, MSFT, GOOGL, AMZN
 BAJO: VOO, VT, SCHD
 ```
+
+> ⚠️ Esta lista es el **universo teórico**. Ningún ticker se presenta al
+> usuario hasta pasar el **Gate de disponibilidad eToro** (ver abajo).
 
 ## Apalancamiento eToro CFDs
 ```
@@ -84,9 +87,64 @@ Pasar como monthly_cost_usd en calculate_scenarios:
   calculate_scenarios(monto, apy, vol, 0, meses, leverage=2.0, monthly_cost_usd=1.58)
 ```
 
+## 🚪 Gate de disponibilidad eToro (OBLIGATORIO antes de recomendar)
+
+**Regla dura:** no se muestra al usuario ningún ticker que no haya pasado
+este gate. eToro restringe instrumentos por jurisdicción, por tipo de
+cuenta (demo/real) y por estado del mercado. Un ticker "famoso" puede
+no estar listado para la cuenta del usuario desde Colombia.
+
+### Protocolo
+```
+POR CADA ticker candidato (antes de cualquier otra tool):
+
+  etoro-server.search_instruments(
+    query="<TICKER>",
+    search_by="internalSymbolFull",
+    page_size=5
+  )
+
+Validar en el primer resultado cuyo internalSymbolFull coincida
+(case-insensitive) con el ticker buscado:
+
+  ✅ instrumentType ∈ {"Stocks", "Etf"}    → tipo correcto
+  ✅ isCurrentlyTradable == true           → mercado operable ahora
+  ✅ isBuyEnabled == true                  → se puede abrir long
+
+Si las 3 pasan:
+  → guardar instrumentId para get_rates / get_candles posteriores
+  → continuar al resto del protocolo
+
+Si alguna falla (o el ticker no aparece en results):
+  → DESCARTAR el ticker para esta sesión
+  → registrar el motivo: "not_listed" | "not_tradable" | "buy_disabled" | "wrong_type"
+  → buscar reemplazo equivalente (mismo sector + volatilidad similar
+    de la tabla de arriba) y repetir el gate con ese
+  → si tras 2 intentos ningún candidato del sector pasa el gate,
+    informar al usuario explícitamente antes de seguir
+```
+
+### Batch al inicio del análisis
+Si vas a evaluar una lista de N tickers (ej. todo el grupo ALTO),
+ejecuta el gate para todos **antes** de llamar a Alpha Vantage / Yahoo
+/ TradingView. Evita trabajar datos fundamentales de activos que luego
+vas a descartar.
+
+### Qué decirle al usuario cuando se descarta un ticker
+No ocultes la restricción — es información útil:
+
+> "CRM no está disponible en tu cuenta eToro desde Colombia (o no es
+> operable en este momento). Lo reemplacé por NOW, que tiene perfil
+> similar (SaaS enterprise, volatilidad ~0.30). NOW sí pasó el gate."
+
 ## Tool calls obligatorios
 ```
-POR CADA acción:
+POR CADA acción candidata (en este ORDEN):
+
+  0. 🚪 GATE eToro (bloqueante):
+     etoro-server.search_instruments(query="<TICKER>", ...)
+     → si no pasa, DESCARTAR y no seguir con esta candidata
+
   1. Alpha Vantage → precio, RSI, MACD, SMA50, SMA200
   2. Yahoo Finance → earnings date
   3. TradingView → señal técnica
@@ -95,3 +153,7 @@ POR CADA acción:
   6. calculate_tax_impact("equity_capital_gain", ganancia_estimada)
   7. Si 2+ acciones: calculate_correlation
 ```
+
+**Invariante:** los pasos 1-7 nunca se ejecutan sobre un ticker que
+falló el paso 0. Si lo haces, estás quemando llamadas de API en algo
+que el usuario no puede operar.
