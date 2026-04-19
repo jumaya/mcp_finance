@@ -57,6 +57,10 @@ PROHIBIDO:
   4. Paso 4: Las 3 posiciones con detalle completo
   5. Distribución del capital (barra visual)
   6. Resumen por plataforma (eToro / Binance)
+   - Capital asignado a cada una
+   - Método de depósito recomendado (PSE para Binance, tarjeta para eToro)
+   - Costo total de entrada estimado en USD
+   - Costo total de salida estimado en USD
 ```
 
 ### Tab 2: "📅 Cronograma" — Plan semanal del Mes 1
@@ -122,6 +126,8 @@ Fuentes — SIEMPRE indicar:
 □ ¿Correlación calculada?
 □ ¿Rendimiento base ≥ mínimo ajustado por capital?
 □ ¿% defensivo ≤ límite del perfil?
+□ ¿Cada posición cumple el mínimo de su venue (platforms_skill §4)?
+□ ¿Costos de entrada/salida (depósito CO + spread + retiro) están descontados del rendimiento base presentado?
 □ ¿Checkpoints ✅ visibles?
 □ ¿Disclaimers al final?
 ```

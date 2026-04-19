@@ -83,6 +83,7 @@ decisión al usuario.
 | `risk_rules.md` | Siempre aplica. Define límites por vertical. |
 | `tax_colombia.md` | Siempre aplica a resultados finales. |
 | `guard_rules.md` | Inputs ambiguos o fuera de scope. |
+| `platforms_skill.md` | Reglas operativas eToro + Binance desde Colombia (mínimos, spreads, depósito/retiro COP). Siempre junto al skill vertical. |
 | `plan_template.md` | Estructura del entregable final. |
 
 ## Flujo de trabajo por defecto
@@ -142,6 +143,11 @@ fase.
 | Mezcla de verticales o pedido global | Combinar skills + `risk_rules` + `plan_template` |
 
 **`risk_rules.md` y `tax_colombia.md` siempre aplican** al final.
+
+**`platforms_skill.md` aplica siempre que el plan toque eToro o Binance.**
+Se carga en paralelo al skill vertical, no lo reemplaza. Es el dueño de
+los mínimos por posición, los spreads por asset class, y los flujos de
+depósito/retiro COP.
 
 ### Fase 4 — Calcular con el MCP propio (no estimar a ojo)
 
@@ -241,11 +247,13 @@ Pregúntate:
 2. ¿Apliqué `risk_rules` al resultado?
 3. ¿Mencioné el impacto fiscal (`tax_colombia`) si aplica?
 4. ¿Todo ticker de eToro que menciono pasó el gate de disponibilidad?
-5. ¿Di opciones con tradeoffs o una orden tipo "compra X"?
-6. **Para cada acción candidata: ¿incluí la fecha exacta de earnings
+5. ¿Cada posición cumple el mínimo de su plataforma según `platforms_skill` (eToro: $10 spot / $50 CFD / $200 copy / $500 smart portfolio; Binance: $10 spot, Simple Earn sin mínimo)?
+6. ¿Los costos de depósito/retiro COP y los spreads específicos del venue están descontados del escenario base?
+7. ¿Di opciones con tradeoffs o una orden tipo "compra X"?
+8. **Para cada acción candidata: ¿incluí la fecha exacta de earnings
    (con flag estimada/confirmada), el target medio de analistas con
    nº de cobertura, y el 52W change vs S&P? Si alguno no estaba en el
    payload, ¿lo dije explícitamente en vez de omitirlo?**
-7. ¿Le dejé al usuario una decisión clara por tomar?
+9. ¿Le dejé al usuario una decisión clara por tomar?
 
 Si alguna respuesta es "no", reescribe.
