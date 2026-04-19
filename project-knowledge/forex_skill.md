@@ -120,10 +120,21 @@ SI quiere MetaTrader → Pepperstone o XTB
 
 ## Cálculos obligatorios
 0. Si se opera en eToro → **Gate eToro** (arriba) antes de seguir
-1. `calculate_position_size(capital, risk_pct, entry, stop, leverage)` — OBLIGATORIO
-2. `calculate_scenarios(amount, apy=0, volatility=0.15, passive=0, months)`
-3. `calculate_risk_score(volatility, drawdown=-0.15, "instant", True, weight)`
-4. `calculate_tax_impact("forex_gain", estimated_annual_gain)`
+1. 🧭 technical_skill.md (OBLIGATORIO antes del paso 2):
+     → Derivar entry, stop y TP técnicamente (Fibonacci sobre swing
+       del par, confluencia con S/R, o fallback ATR × 1.5 si no hay
+       swing claro).
+     → technical_skill reemplaza al texto informal actual sobre
+       "soporte/resistencia más cercano" de esta sección.
+     → Validar R:R ≥ 1:2 (mínimo más alto que equity porque forex usa
+       apalancamiento).
+
+2. `calculate_position_size(capital, risk_pct, entry, stop, leverage)`
+   — OBLIGATORIO, usando los valores de entry y stop provenientes de
+   technical_skill.
+3. `calculate_scenarios(amount, apy=0, volatility=0.15, passive=0, months)`
+4. `calculate_risk_score(volatility, drawdown=-0.15, "instant", True, weight)`
+5. `calculate_tax_impact("forex_gain", estimated_annual_gain)`
 
 ## Cronograma autónomo
 ```
@@ -147,7 +158,10 @@ SI intermedio:
   "Swing trading en pares principales con R:R mínimo 1:2. Entrada en retrocesos a soportes en tendencia."
 
 SI avanzado:
-  "Confluencia MA20/50 + S/R + RSI no extremo en D1/H4. Position sizing 2% risk. Monitorear correlación si operas GBP y EUR simultáneamente."
+  SI avanzado:
+  "El setup viene de technical_skill: entrada en <nivel Fibonacci o S/R>,
+   SL en <nivel>, TP escalonado a 1.272 y 1.618 del swing. Position
+   sizing al 2% risk con leverage <X>x."
 ```
 
 ## Advertencias obligatorias

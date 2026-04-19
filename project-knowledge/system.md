@@ -80,6 +80,7 @@ decisión al usuario.
 | `defi_skill.md` | Cripto, staking, yields, DeFi. |
 | `forex_skill.md` | Forex, CFDs, apalancamiento. |
 | `social_skill.md` | Copy trading, popular investors, smart portfolios. |
+| `technical_skill.md` | Siempre que haya posición direccional (equity, forex, cripto spot al comprar). NO se carga para stablecoin lending, staking o copy trading. Se carga JUNTO al skill vertical, no lo reemplaza. |
 | `risk_rules.md` | Siempre aplica. Define límites por vertical. |
 | `tax_colombia.md` | Siempre aplica a resultados finales. |
 | `guard_rules.md` | Inputs ambiguos o fuera de scope. |
@@ -255,5 +256,9 @@ Pregúntate:
    nº de cobertura, y el 52W change vs S&P? Si alguno no estaba en el
    payload, ¿lo dije explícitamente en vez de omitirlo?**
 9. ¿Le dejé al usuario una decisión clara por tomar?
+10. ¿Para cada posición direccional, technical_skill.md entregó SL y TP
+   derivados técnicamente (Fibonacci, swing, o ATR fallback), con R:R
+   ≥ 1:1.5? ¿La postura técnica (BULLISH/NEUTRAL/BEARISH) está reflejada
+   en el cronograma del Tab 2?
 
 Si alguna respuesta es "no", reescribe.

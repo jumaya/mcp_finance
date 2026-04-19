@@ -55,6 +55,12 @@ PROHIBIDO:
   2. Paso 2: Asimetrías detectadas (2-3 máximo)
   3. Paso 3: Popular investors / Copy trading
   4. Paso 4: Las 3 posiciones con detalle completo
+    Para CADA posición direccional, incluir bloque "Setup técnico"(proveniente de technical_skill.md):
+    - Postura (BULLISH/NEUTRAL/BEARISH/sin señal clara)
+    - Patrón identificado + divergencias
+    - Entrada / SL / TP1 / TP2 con justificación de cada nivel
+    - R:R calculado
+    Para posiciones NO direccionales (stablecoin lending, staking, copy trading), omitir el bloque. Documentar "no aplica análisis técnico".
   5. Distribución del capital (barra visual)
   6. Resumen por plataforma (eToro / Binance)
    - Capital asignado a cada una
@@ -130,4 +136,12 @@ Fuentes — SIEMPRE indicar:
 □ ¿Costos de entrada/salida (depósito CO + spread + retiro) están descontados del rendimiento base presentado?
 □ ¿Checkpoints ✅ visibles?
 □ ¿Disclaimers al final?
+□ ¿Cada posición direccional tiene bloque "Setup técnico" con SL/TP
+  derivados de technical_skill.md?
+□ ¿El R:R técnico por posición es ≥ 1:1.5 (equity/cripto) o ≥ 1:2 (forex)?
+  Si alguna posición queda por debajo, ¿está marcada explícitamente?
+□ ¿La modulación del cronograma (Tab 2) refleja la postura técnica?
+  (Bullish → entrada Semana 1; Neutral → 50/50 S1-S2; Bearish → 33/resto
+  condicionado)
+□ ¿Los SL técnicos aparecen también en el Tab 4 como triggers de salida?
 ```

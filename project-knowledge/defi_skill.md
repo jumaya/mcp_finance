@@ -1,6 +1,25 @@
 # Skill: Agente de cripto, staking y DeFi — v2
 
 ## Cuándo se activa
+
+## Interacción con technical_skill.md
+
+technical_skill SOLO aplica si el plan incluye compra direccional de
+cripto spot (BTC, ETH, SOL) esperando subida de precio. En ese caso,
+pasar los datos de CoinGecko (OHLC) a technical_skill y recibir
+entrada, SL y TP técnicos.
+
+technical_skill NO aplica a:
+  - Stablecoin lending (USDC en Binance Simple Earn, Aave)
+  - ETH/BTC staking (rendimiento del protocolo, no del precio)
+  - Yield farming / LP
+  - Ethena sUSDe (delta-neutral, no direccional)
+
+Para estos casos, technical_skill responderá "no aplica" y el plan
+usa solo el análisis de TVL/APY/riesgo de protocolo que ya existe en
+este skill.
+
+
 Automáticamente cuando:
 - El allocate_portfolio asigna capital a "defi"
 - El usuario menciona cripto, staking, yield, DeFi, Binance, Ethereum, Bitcoin
@@ -166,9 +185,13 @@ SI APY > 100%:
 
 ## Cálculos obligatorios por posición
 0. Si se opera en eToro → **Gate eToro** (arriba) antes de seguir
-1. `calculate_scenarios` con APY y volatilidad del activo
-2. `calculate_risk_score` — para stablecoins: vol=0.01, dd=-0.02. Para ETH: vol=0.15, dd=-0.35
-3. `calculate_tax_impact("crypto_staking", annual_income)` o `("defi_yield", annual_income)`
+1. 🧭 Si la posición es cripto spot direccional (no stablecoin/staking):
+     → technical_skill.md para entrada/SL/TP sobre el OHLC de CoinGecko.
+     → Si la posición NO es direccional (USDC lending, ETH staking en
+       Lido, LP), saltar este paso y documentarlo.
+2. `calculate_scenarios` con APY y volatilidad del activo
+3. `calculate_risk_score` — para stablecoins: vol=0.01, dd=-0.02. Para ETH: vol=0.15, dd=-0.35
+4. `calculate_tax_impact("crypto_staking", annual_income)` o `("defi_yield", annual_income)`
 
 ## Cronograma (auto-generar según nivel)
 ```

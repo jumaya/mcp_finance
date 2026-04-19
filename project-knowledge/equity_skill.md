@@ -254,6 +254,15 @@ POR CADA acción candidata (en este ORDEN):
        analistas + momentum relativo al S&P). No basta con llamar
        la tool; hay que LEER el payload y presentar los campos.
   3. TradingView → señal técnica
+  3.5. 🧭 technical_skill.md (si la posición es direccional):
+     → Pasa a este skill los datos recolectados en los pasos 1-3
+       (OHLC, RSI, MACD, SMA50, SMA200, señal TradingView).
+     → Espera recibir de vuelta: postura técnica, patrón, divergencias,
+       entrada sugerida, SL, TP1, TP2, R:R, pauta de cronograma.
+     → Si technical_skill reporta R:R < 1:1.5, anotar la limitación en
+       el Tab 1 y considerar reemplazo o entrada pospuesta.
+     → Los SL/TP técnicos SUSTITUYEN a cualquier SL/TP "redondo"
+       (ej. -10%) que se hubiera considerado.
   4. calculate_risk_score(vol_tabla, dd_tabla, "instant", true, peso, leverage)
   5. calculate_scenarios(monto, apy, vol_tabla, 0, meses, leverage, monthly_cost)
   6. calculate_tax_impact("equity_capital_gain", ganancia_estimada)
@@ -263,6 +272,12 @@ POR CADA acción candidata (en este ORDEN):
 **Invariante:** los pasos 1-7 nunca se ejecutan sobre un ticker que
 falló el paso 0. Si lo haces, estás quemando llamadas de API en algo
 que el usuario no puede operar.
+
+**Invariante técnico:** si se presenta una acción como "entrada ahora"
+en el plan, los SL y TP de esa posición deben venir de technical_skill.md
+(Fibonacci, swing, o ATR fallback documentado). SL genéricos tipo "-10%"
+no son aceptables salvo que technical_skill haya reportado explícitamente
+"sin señal clara — usar ATR fallback".
 
 **Invariante earnings:** si el paso 2 se ejecutó pero la respuesta al
 usuario no contiene una fecha concreta de earnings (o la nota
