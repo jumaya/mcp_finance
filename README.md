@@ -1,22 +1,25 @@
 # Agent Finance — Hybrid MCP Architecture
 
 Sistema multi-agente de inversión para generar planes de ingresos pasivos personalizados.
-Arquitectura híbrida: 5 MCP servers para datos + 9 skills con lógica de decisión autónoma + MCP server propio de calculadoras.
+Arquitectura híbrida: 5 MCP servers para datos + 11 skills con lógica de decisión autónoma + MCP server propio de calculadoras.
 
 ## Estructura
 
 ```
 mcp_finance/
-├── project-knowledge/          ← Skills v2 (subir a Claude Desktop Project Knowledge)
-│   ├── system.md               ← Agente orquestador: ciclo autónomo, árbol decisiones
-│   ├── equity_skill.md         ← Acciones/ETFs: selección por capital, correlación, RSI
-│   ├── defi_skill.md           ← Cripto/DeFi: estrategia por nivel, decisión de red
-│   ├── forex_skill.md          ← Forex/CFDs: barrera entrada, selección pares
-│   ├── social_skill.md         ← Copy trading: popular investors, eToro MCP
-│   ├── risk_rules.md           ← 6 reglas SI/ENTONCES + stress test + exit triggers
-│   ├── tax_colombia.md         ← DIAN: W-8BEN, umbrales, optimización fiscal
-│   ├── guard_rules.md          ← Clasificación inputs fuera de scope
-│   └── plan_template.md        ← 10 secciones obligatorias + checklist calidad
+├── project-knowledge/          ← Skills (subir a Claude Desktop Project Knowledge)
+│   ├── system.md                    ← Agente orquestador: ciclo autónomo, árbol decisiones
+│   ├── equity_skill.md              ← Acciones/ETFs: selección por capital, correlación, RSI
+│   ├── defi_skill.md                ← Cripto/DeFi: estrategia por nivel, decisión de red
+│   ├── forex_skill.md               ← Forex/CFDs: barrera entrada, selección pares
+│   ├── social_skill.md              ← Copy trading: popular investors, eToro MCP
+│   ├── platforms_skill.md           ← Reglas operativas eToro + Binance desde Colombia
+│   ├── tracking_skill.md            ← Seguimiento post-inversión y rebalanceo
+│   ├── market_intelligence_skill.md ← Paso 1/2: contexto de mercado y asimetrías
+│   ├── technical_skill.md           ← Análisis técnico (Fibonacci, SL/TP, R:R)
+│   ├── risk_rules.md                ← Reglas SI/ENTONCES + stress test + exit triggers
+│   ├── guard_rules.md               ← Clasificación inputs fuera de scope
+│   └── plan_template.md             ← Estructura JSX de 4 tabs + checklist calidad
 ├── mcp-server/                 ← Tu MCP server propio (Python FastMCP)
 │   ├── server.py               ← 7 tools de cálculo financiero
 │   └── pyproject.toml
@@ -32,7 +35,7 @@ mcp_finance/
 | CoinGecko | Oficial | ~30 | Cripto precios, market cap, pools DeFi |
 | DeFiLlama | Comunidad | ~7 | TVL protocolos, APY yields, stablecoins |
 | eToro MCP | Comunidad | 34 | Portafolio, popular investors, órdenes, DCA |
-| Investment Calculators | Propio | 7 | Risk score, tax CO, position size, allocation |
+| Investment Calculators | Propio | 6 | Risk score, position size, allocation, scenarios, correlation, stress test |
 
 ## Setup
 
@@ -65,7 +68,7 @@ Reiniciar Claude Desktop.
 
 ### 5. Crear Project
 1. Claude Desktop → Projects → New Project → "Investment Advisor"
-2. Project Knowledge → Upload → los 9 archivos .md de `project-knowledge/`
+2. Project Knowledge → Upload → los 11 archivos .md de `project-knowledge/`
 3. Chatear: "Tengo $500 y quiero generar ingresos pasivos"
 
 ## Verticales de inversión

@@ -191,7 +191,6 @@ SI APY > 100%:
        Lido, LP), saltar este paso y documentarlo.
 2. `calculate_scenarios` con APY y volatilidad del activo
 3. `calculate_risk_score` — para stablecoins: vol=0.01, dd=-0.02. Para ETH: vol=0.15, dd=-0.35
-4. `calculate_tax_impact("crypto_staking", annual_income)` o `("defi_yield", annual_income)`
 
 ## Cronograma (auto-generar según nivel)
 ```

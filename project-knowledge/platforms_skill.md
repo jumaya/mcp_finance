@@ -34,7 +34,6 @@ en eToro o Binance, o el usuario pregunte:
 | `defi_skill` gate | ¿Token Y está tradable en eToro? | Mínimo USD cripto en eToro + universo Binance CO |
 | `forex_skill` gate | ¿Par Z está tradable en eToro? | Tamaño mínimo CFD forex + spread por par |
 | `social_skill` | Cómo elegir a quién copiar | Mínimo USD absoluto de CopyTrader ($200) y cómo se reparte |
-| `tax_colombia` | Cuánto paga DIAN | Qué fricción añade P2P/Transfiya al P&L real |
 | `risk_rules` | Concentración, reserva | Comisiones/spreads que erosionan el rendimiento base |
 
 **Regla dura:** si hay conflicto entre este skill y el gate de un vertical,
@@ -170,8 +169,8 @@ Conversión FX:       50 pips al depositar/retirar en moneda ≠ USD
 Inactividad:         USD $10/mes tras 12 meses sin login
 Overnight CFD:       0.015%/día × apalancamiento × notional (aprox)
                      weekend: triple (viernes 22:00 UK cobra x3)
-Dividendos:          se pagan neto de retención del país emisor
-                     (acciones US: 30% retenido en origen)
+Dividendos:          se pagan netos de la retención del país emisor, según aplique.
+
 ```
 
 **Regla de integración con `calculate_scenarios`:**
@@ -179,11 +178,7 @@ Dividendos:          se pagan neto de retención del país emisor
 ```
 Para posiciones CFD en eToro:
   monthly_cost_usd = notional × leverage × 0.015% × 30 (ya usado por equity_skill)
-
-Para acciones spot US con dividendos:
-  yield_neto = yield_bruto × (1 - 0.30)
-  → 30% retenido en origen, NO es recuperable en Colombia sin
-    tratado de doble tributación específico (ver tax_colombia.md)
+  
 ```
 
 ### 1.6 Activos disponibles desde Colombia (universo nominal)
@@ -595,15 +590,6 @@ de entrada/salida: -3%").
 > convenir P2P: vendes USDT en P2P eligiendo "Bancolombia" o "Nequi"
 > como método, el comprador te transfiere, tú liberas el USDT. Mejor
 > tasa pero requiere 15-45 min activos en la pantalla.
-
-### "¿Cuánto pago de impuestos por invertir en eToro/Binance?"
-
-> Delegado a `tax_colombia.md`. Resumen: ganancias por venta de
-> acciones e intereses son renta ordinaria; cripto es tratada como
-> activo y genera ganancia ocasional si se tiene > 2 años o renta
-> líquida si menos. El agente calcula el impacto con
-> `calculate_tax_impact` sobre la ganancia estimada antes de presentar
-> el plan final.
 
 ---
 

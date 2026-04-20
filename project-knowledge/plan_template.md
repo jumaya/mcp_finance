@@ -97,8 +97,6 @@ Tab 3: "📈 Escenarios" — Tablas a 3M y 6M + honestidad sobre rendimiento
   - Si base < mínimo del tramo superior, explicar que mover al tramo superior requiere más capital, NO más riesgo.
 2. Tabla escenarios a 3 meses (optimista/base/pesimista con razones)
 3. Tabla escenarios a 6 meses (optimista/base/pesimista con razones)
-4. Impacto fiscal Colombia (resumen por tipo de activo)
-
 
 Tab 4: "⚠️ Riesgo" — Stress test + validación + disclaimers
 

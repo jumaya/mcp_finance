@@ -213,67 +213,6 @@ def stress_test_portfolio(
         "positions": results,
     }
 
-
-@mcp.tool()
-def calculate_tax_impact(
-    asset_type: str,
-    annual_income_usd: float,
-    has_w8ben: bool = False,
-    usd_to_cop: float = 4200.0,
-) -> dict:
-    """
-    Calcula el impacto fiscal para un activo de inversion bajo reglas colombianas (DIAN).
-
-    Args:
-        asset_type: "us_stock_dividend", "us_etf_dividend", "crypto_staking",
-                    "crypto_trading_gain", "defi_yield", "forex_gain",
-                    "copy_trading_gain", "equity_capital_gain"
-        annual_income_usd: Ingreso anual estimado en USD
-        has_w8ben: Si tiene formulario W-8BEN
-        usd_to_cop: Tasa de cambio USD/COP actual
-    """
-    UVT_2025 = 47_065
-    income_cop = annual_income_usd * usd_to_cop
-
-    rules = {
-        "us_stock_dividend": {"income_type": "renta_fuente_extranjera", "us_withholding": 0.15 if has_w8ben else 0.30, "co_rate": 0.0, "retention_source": 0.0, "w8ben_applicable": True},
-        "us_etf_dividend": {"income_type": "renta_fuente_extranjera", "us_withholding": 0.15 if has_w8ben else 0.30, "co_rate": 0.0, "retention_source": 0.0, "w8ben_applicable": True},
-        "crypto_staking": {"income_type": "ganancia_ocasional", "us_withholding": 0.0, "co_rate": 0.15, "retention_source": 0.0, "w8ben_applicable": False},
-        "crypto_trading_gain": {"income_type": "ganancia_ocasional", "us_withholding": 0.0, "co_rate": 0.15, "retention_source": 0.0, "w8ben_applicable": False},
-        "defi_yield": {"income_type": "ganancia_ocasional", "us_withholding": 0.0, "co_rate": 0.15, "retention_source": 0.0, "w8ben_applicable": False},
-        "forex_gain": {"income_type": "renta_ordinaria", "us_withholding": 0.0, "co_rate": 0.0, "retention_source": 0.04, "w8ben_applicable": False},
-        "copy_trading_gain": {"income_type": "renta_fuente_extranjera", "us_withholding": 0.0, "co_rate": 0.0, "retention_source": 0.0, "w8ben_applicable": False},
-        "equity_capital_gain": {"income_type": "ganancia_ocasional", "us_withholding": 0.0, "co_rate": 0.15, "retention_source": 0.0, "w8ben_applicable": False},
-    }
-
-    r = rules.get(asset_type, rules["crypto_trading_gain"])
-    after_us = annual_income_usd * (1 - r["us_withholding"])
-    after_co = after_us * (1 - r["co_rate"]) * (1 - r["retention_source"])
-    net_multiplier = round(after_co / annual_income_usd, 3) if annual_income_usd > 0 else 1.0
-    total_tax = round(annual_income_usd - after_co, 2)
-
-    must_declare = income_cop > 1400 * UVT_2025
-    must_report_foreign = True
-
-    actions = []
-    if r["w8ben_applicable"] and not has_w8ben:
-        actions.append("URGENTE: Llenar W-8BEN para reducir retencion USA del 30% al 15%")
-    if must_declare:
-        actions.append("Declarar renta anual ante la DIAN")
-    if must_report_foreign:
-        actions.append("Reportar activos en el exterior ante la DIAN")
-
-    return {
-        "asset_type": asset_type, "income_type": r["income_type"],
-        "gross_income_usd": annual_income_usd,
-        "net_income_usd": round(after_co, 2), "total_tax_usd": total_tax,
-        "effective_tax_rate_pct": round((1 - net_multiplier) * 100, 1),
-        "w8ben_applicable": r["w8ben_applicable"],
-        "must_declare_renta": must_declare,
-        "action_items": actions,
-    }
-
-
 @mcp.tool()
 def calculate_position_size(
     capital_usd: float, risk_per_trade_pct: float,

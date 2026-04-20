@@ -134,7 +134,6 @@ SI quiere MetaTrader → Pepperstone o XTB
    technical_skill.
 3. `calculate_scenarios(amount, apy=0, volatility=0.15, passive=0, months)`
 4. `calculate_risk_score(volatility, drawdown=-0.15, "instant", True, weight)`
-5. `calculate_tax_impact("forex_gain", estimated_annual_gain)`
 
 ## Cronograma autónomo
 ```

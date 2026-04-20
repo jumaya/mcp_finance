@@ -98,15 +98,7 @@ Para CADA alerta, proponer una acción concreta basada en las reglas del plan or
 - **SL técnico alcanzado** → cerrar. No negociar con el SL del plan.
 - **Capital nuevo disponible** → asignar a la posición más subponderada que siga dentro de tesis.
 
-### Fase E — Contexto fiscal Colombia
-
-Si hubo cierres realizados desde la última revisión o el rebalanceo propuesto implica cierres:
-- Llamar `calculate_tax_impact` por cada operación cerrada o a cerrar.
-- Mostrar impuesto DIAN acumulado del año en curso.
-- Delegar reglas específicas a `tax_colombia.md`.
-- Si el rebalanceo genera impuesto significativo, ofrecer alternativa de rebalanceo "solo con capital nuevo" que no dispare evento gravable.
-
-### Fase F — Entregar el reporte de seguimiento
+### Fase E — Entregar el reporte de seguimiento
 
 Estructura obligatoria (es un artifact más liviano que el plan_template, NO los 4 tabs del plan):
 
@@ -132,9 +124,7 @@ Estructura obligatoria (es un artifact más liviano que el plan_template, NO los
 
 4. REBALANCEO SUGERIDO (si aplica)
    - Tabla: qué vender, qué comprar, cuánto USD, en qué plataforma.
-   - Verificar cada ticker de eToro pasa el gate search_instruments antes de escribirlo.
-   - Impacto fiscal del rebalanceo (calculate_tax_impact).
-   - Alternativa sin cierres si el fiscal es alto.
+   - Verificar cada ticker de eToro pasa el gate search_instruments antes de escribirlo.      
 
 5. NUEVO BASELINE DE SEGUIMIENTO (JSON actualizado)
    Bloque listo para que el usuario guarde y pegue en la próxima sesión.
@@ -151,8 +141,8 @@ Estructura obligatoria (es un artifact más liviano que el plan_template, NO los
 DIARIO: solo si el usuario tiene CFDs o forex apalancado abierto.
 SEMANAL: copy trading rendimiento, DeFi APY.
 MENSUAL: ETFs rendimiento, DCA con ahorro nuevo, rebalanceo si desviación > 5 p.p.
-TRIMESTRAL: stress test completo, re-evaluar tesis por posición, impuesto DIAN acumulado.
-ANUAL: preparar declaración DIAN, consolidar rendimientos reales del año.
+TRIMESTRAL: stress test completo, re-evaluar tesis por posición.
+ANUAL: consolidar rendimientos reales del año.
 ```
 
 ## Reglas de interacción específicas

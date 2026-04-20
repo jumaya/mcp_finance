@@ -265,11 +265,10 @@ POR CADA acción candidata (en este ORDEN):
        (ej. -10%) que se hubiera considerado.
   4. calculate_risk_score(vol_tabla, dd_tabla, "instant", true, peso, leverage)
   5. calculate_scenarios(monto, apy, vol_tabla, 0, meses, leverage, monthly_cost)
-  6. calculate_tax_impact("equity_capital_gain", ganancia_estimada)
-  7. Si 2+ acciones: calculate_correlation
+  6. Si 2+ acciones: calculate_correlation
 ```
 
-**Invariante:** los pasos 1-7 nunca se ejecutan sobre un ticker que
+**Invariante:** los pasos 1-6 nunca se ejecutan sobre un ticker que
 falló el paso 0. Si lo haces, estás quemando llamadas de API en algo
 que el usuario no puede operar.
 
