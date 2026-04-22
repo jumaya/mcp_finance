@@ -5,9 +5,7 @@
 ## Interacción con technical_skill.md
 
 technical_skill SOLO aplica si el plan incluye compra direccional de
-cripto spot (BTC, ETH, SOL) esperando subida de precio. En ese caso,
-pasar los datos de CoinGecko (OHLC) a technical_skill y recibir
-entrada, SL y TP técnicos.
+cripto spot (BTC, ETH, SOL) esperando subida de precio.
 
 technical_skill NO aplica a:
   - Stablecoin lending (USDC en Binance Simple Earn, Aave)
@@ -139,11 +137,6 @@ SI APY > 100%:
 ### DeFiLlama (para yields y TVL)
 - Consultar pools: filtrar por chain, project, y TVL > $100M
 - Datos relevantes: apy_base, apy_reward, tvl_usd, audited
-
-### CoinGecko (para precios de cripto)
-- ETH: precio actual, cambio 24h/7d/30d
-- SOL: precio actual
-- USDC: verificar que mantiene paridad ($1 ± $0.01)
 
 ### eToro (solo si se opera en eToro)
 - Pasar el gate de arriba

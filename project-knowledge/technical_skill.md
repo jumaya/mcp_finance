@@ -364,9 +364,6 @@ Si falta OHLC diario suficiente:
 
 Si el ticker es de forex y falta data:
   alphavantage.TOOL_CALL(name="FX_DAILY", from_symbol="EUR", to_symbol="USD")
-
-Para cripto, si CoinGecko ya trajo precio pero falta OHLC:
-  coingecko.get_range_coins_ohlc(...)
 ```
 
 ## Protocolo numerado (cómo ejecuta el skill)

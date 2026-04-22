@@ -326,12 +326,6 @@ Si el plan propone un token en Binance que NO está en la lista
      operable desde tu cuenta"
   3. NO calcular escenarios con supuestos de precio si el token no
      se pudo validar — pedir al usuario que confirme primero
-
-Alternativa agéntica (si el stack ya tiene CoinGecko MCP):
-  coingecko.get_id_coins(id="<coingecko_id>")
-    → revisar campo tickers[], filtrar por market.name == "Binance"
-    → si hay par <TOKEN>/USDT en Binance con trust_score = green,
-      aceptar como disponible
 ```
 
 ### 2.6 Comisiones Binance (plan debe incluirlas)

@@ -58,7 +58,6 @@ Los 12 skills viven todos en Project Knowledge, pero **no todos son relevantes e
 | Server | Tipo | Uso principal |
 |--------|------|---------------|
 | Alpha Vantage | Oficial | Acciones, ETFs, forex, indicadores técnicos (RSI, MACD, EMA). |
-| CoinGecko | Oficial | Cripto precios, market cap, OHLC, pools DeFi. |
 | DeFiLlama | Comunidad | TVL de protocolos, APY de yields, stablecoins. |
 | Yahoo Finance | Comunidad | Datos históricos, fundamentals, cobertura amplia de tickers. |
 | TradingView | Comunidad | Screeners (RSI < 30, breakout, momentum), datos técnicos. |

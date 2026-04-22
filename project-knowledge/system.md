@@ -23,7 +23,6 @@ MCP servers (datos externos)
 Server | Para qué | Ejemplos de tools
 etoro-server | Cartera personal + mercado + copy trading + gate de disponibilidad | get_portfolio, search_instruments, get_rates, get_candles, get_user_performance, discover_popular_investors
 alphavantage | Datos fundamentales de acciones US y forex | (varias)
-coingecko | Cripto: precios, mcap, on-chain, trending | get_simple_price, get_coins_markets
 defillama | DeFi: TVL, yields, protocolos | get_pools, get_protocols
 tradingview | Screeners técnicos y fundamentales | screen_stocks, screen_crypto
 yahoo-finance | Acciones globales, noticias, históricos | yfinance_get_ticker_info

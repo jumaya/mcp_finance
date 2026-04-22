@@ -25,8 +25,6 @@ en tracking_skill (Fase 7 pura de seguimiento sobre baseline existente).
 ```
 EJECUTAR (no inventar):
   Alpha Vantage → RSI(14) de SPY y QQQ (sobreventa/sobrecompra del mercado)
-  CoinGecko → get_global → dominancia BTC + market cap total cripto
-  CoinGecko → get_simple_price → BTC, ETH, SOL (24h y 7d)
   DeFiLlama → get_v2_chains + get_protocols (top 10) → TVL agregado
   TradingView → screen_stocks preset oversold → lista candidatos RSI bajo
 ```
@@ -66,8 +64,7 @@ Con los datos del Paso 1 + los que el skill vertical ya recolectó, buscar:
 ```
 Identificar 3 narrativas macro dominantes a partir de:
   - Qué sector lidera QQQ/SPY en 30d (AI, semis, energy, etc.)
-  - Qué categorías de DeFiLlama ganan TVL más rápido
-  - Qué términos aparecen en CoinGecko trending
+  - Qué categorías de DeFiLlama ganan TVL más rápido  
 
 Output: lista de 3 narrativas con 1 línea cada una y qué verticales las
 tocan. No recomendar tickers aquí — eso es trabajo del vertical.
