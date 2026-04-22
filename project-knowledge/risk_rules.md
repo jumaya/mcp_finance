@@ -58,16 +58,44 @@ Pares conocidos de alta correlación:
   ETH + SOL (~0.65) → aceptable
 ```
 
-### R6: Risk score del portafolio
+### R6: Risk score del portafolio (ajustado por correlación)
 ```
-Calcular risk score ponderado: Σ(weight_i × risk_score_i)
+Ejecutar calculate_portfolio_risk_score(positions, correlation_matrix)
 
-RIESGO BAJO:     score ponderado debe ser ≤ 4.0
-RIESGO MODERADO: score ponderado debe ser ≤ 6.0
-RIESGO ALTO:     score ponderado debe ser ≤ 8.0
-RIESGO EXTREMO:  sin límite (acepta cualquier score)
+La tool calcula:
+  score_ponderado = Σ(weight_i × risk_score_i)            ← base
+
+Y luego ajusta por correlación promedio ponderada entre pares:
+  corr_prom = Σ(w_i × w_j × corr_ij) / Σ(w_i × w_j)       para i < j
+
+  SI corr_prom > 0.7:  score_final = score_ponderado + 1.0
+  SI corr_prom < 0.3:  score_final = score_ponderado - 0.5
+  EN OTRO CASO:        score_final = score_ponderado
+
+score_final se satura a [1, 10].
+
+Límites por perfil (evaluar sobre score_final, no sobre el ponderado base):
+  RIESGO BAJO:     score_final ≤ 4.0
+  RIESGO MODERADO: score_final ≤ 6.0
+  RIESGO ALTO:     score_final ≤ 8.0
+  RIESGO EXTREMO:  sin límite (acepta cualquier score)
+
+Cómo armar la correlation_matrix:
+  - Para cada par (i, j) con i < j, ejecutar calculate_correlation con 30d.
+  - Construir matriz N×N simétrica con diagonal = 1.0.
+  - Pasarla a calculate_portfolio_risk_score.
+  - Si no hay precios para algún par, omitir la matriz: la tool devuelve
+    solo el score ponderado base (compatible con R6 v1).
 
 SI viola → reducir posición con mayor risk score y redistribuir.
+  Si además corr_prom > 0.7, priorizar reemplazar una posición del par
+  más correlacionado antes que solo reducir tamaño — eso ataca la causa
+  (concentración en un mismo factor), no el síntoma.
+
+Por qué el ajuste: dos posiciones de risk=8 correlacionadas al 0.9 son
+mucho más riesgosas que las mismas dos correlacionadas al 0.2. En caída
+caen juntas. La suma ponderada sola las trata idénticamente; el ajuste
+por correlación promedio ponderada refleja la diversificación real.
 ```
 
 ## Stress test obligatorio
@@ -103,8 +131,12 @@ SI vertical = social (copy trading):
 
 ## Orden de ejecución
 1. Ejecutar `calculate_risk_score` para cada posición
-2. Verificar R1 a R6 según el perfil de riesgo del usuario
-3. Ejecutar `calculate_correlation` para pares principales
-4. Ejecutar `stress_test_portfolio` con moderate Y severe
-5. Generar exit triggers por posición
-6. Si algún ajuste se hizo: explicar al usuario qué cambió y por qué
+2. Verificar R1 a R5 según el perfil de riesgo del usuario
+3. Ejecutar `calculate_correlation` para cada par principal de activos
+   → Armar la `correlation_matrix` del portafolio con los resultados
+4. Ejecutar `calculate_portfolio_risk_score(positions, correlation_matrix)`
+   → Aplica R6 (score ponderado + ajuste por correlación)
+   → Verificar límite según perfil del usuario (BAJO/MODERADO/ALTO/EXTREMO)
+5. Ejecutar `stress_test_portfolio` con moderate Y severe
+6. Generar exit triggers por posición
+7. Si algún ajuste se hizo: explicar al usuario qué cambió y por qué

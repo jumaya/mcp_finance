@@ -19,6 +19,17 @@ v6 — Fix 5: compare_portfolio_to_baseline — checkpoint determinística
      #1 de system.md ("nunca inventes números; si no tienes el dato,
      consúltalo con una tool"). Ahora la aritmética del tracking es
      una tool.
+v7 — Fix 6: calculate_portfolio_risk_score — ajuste por correlación.
+     Antes R6 de risk_rules.md definía score_ponderado = Σ(weight_i ×
+     risk_score_i), lo cual ignora por completo la correlación entre
+     posiciones. Dos activos con risk=8 correlacionados a 0.9 son
+     mucho más riesgosos que los mismos dos activos correlacionados
+     a 0.2, pero la suma ponderada los trata idénticamente. La nueva
+     tool recibe una correlation_matrix opcional y ajusta el score
+     agregado: si la correlación promedio ponderada > 0.7 → +1.0
+     (portafolio menos diversificado de lo que parece), si < 0.3 →
+     -0.5 (diversificación real reduce riesgo agregado). Regla
+     simple y defendible; documentada en risk_rules.md R6.
 
 Ejecutar: uv run --no-project --with fastmcp server.py
 """
@@ -214,6 +225,197 @@ def calculate_correlation(prices_a: list[float], prices_b: list[float]) -> dict:
         interp = "Alta correlacion negativa: se mueven en direccion opuesta."
 
     return {"correlation": corr, "is_problematic": is_problematic, "interpretation": interp}
+
+
+@mcp.tool()
+def calculate_portfolio_risk_score(
+    positions: list[dict],
+    correlation_matrix: list[list[float]] | None = None,
+) -> dict:
+    """
+    Calcula el risk score agregado del portafolio ajustando por correlación.
+
+    Antes (R6 v1): score_ponderado = Σ(weight_i × risk_score_i). Ignoraba
+    correlación. Ahora: se aplica un ajuste por correlación promedio
+    ponderada para reflejar diversificación real.
+
+    Regla de ajuste (simple y defendible):
+      - correlación promedio ponderada > 0.7 → score_final = score_ponderado + 1.0
+        (posiciones se mueven juntas; diversificación aparente, no real)
+      - correlación promedio ponderada < 0.3 → score_final = score_ponderado - 0.5
+        (diversificación real reduce el riesgo agregado)
+      - en medio (0.3 ≤ corr ≤ 0.7) → sin ajuste
+
+    La correlación promedio ponderada se calcula sobre todos los pares (i, j)
+    con i < j, donde el peso de cada par es (weight_i × weight_j). Esto le da
+    más importancia a los pares de posiciones grandes que a pares de posiciones
+    pequeñas.
+
+    Args:
+        positions: Lista de posiciones, cada una con:
+            {"asset_id": str, "weight_pct": float, "risk_score": float}
+            weight_pct en porcentaje (ej: 25 = 25%), risk_score en escala 1-10.
+        correlation_matrix: Matriz N×N de correlaciones entre posiciones, en el
+            mismo orden que `positions`. Diagonal = 1.0, simétrica. Si se omite,
+            no se aplica ajuste y se devuelve solo el score ponderado base.
+
+    Returns:
+        dict con:
+          - weighted_score: Σ(weight_i × risk_score_i) (base, sin ajuste)
+          - avg_weighted_correlation: correlación promedio ponderada por pares
+          - correlation_adjustment: ajuste aplicado (+1.0, -0.5, o 0.0)
+          - adjusted_score: weighted_score + correlation_adjustment (clamp [1, 10])
+          - interpretation: texto explicativo
+          - warnings: advertencias (matriz mal formada, pesos fuera de rango, etc.)
+    """
+    warnings: list[str] = []
+
+    if not positions:
+        return {
+            "error": "Lista de posiciones vacía",
+            "weighted_score": None,
+            "adjusted_score": None,
+        }
+
+    # ── 1. Score ponderado base (compatible con R6 v1) ──
+    total_weight = sum(p.get("weight_pct", 0) for p in positions)
+    if total_weight <= 0:
+        return {
+            "error": "Suma de weight_pct debe ser > 0",
+            "weighted_score": None,
+            "adjusted_score": None,
+        }
+    if abs(total_weight - 100.0) > 1.0:
+        warnings.append(
+            f"Suma de weight_pct = {total_weight:.1f}% (esperado ~100%). "
+            "Se normaliza internamente para el cálculo."
+        )
+
+    # Normalizo los pesos a fracción (0-1) para que la aritmética sea limpia
+    # aunque el usuario pase 100% total o no.
+    weights = [p.get("weight_pct", 0) / total_weight for p in positions]
+    scores = [float(p.get("risk_score", 0)) for p in positions]
+
+    weighted_score = sum(w * s for w, s in zip(weights, scores))
+
+    # ── 2. Validación de correlation_matrix (si se proporcionó) ──
+    n = len(positions)
+    adjustment = 0.0
+    avg_weighted_corr: float | None = None
+
+    if correlation_matrix is None:
+        warnings.append(
+            "No se proporcionó correlation_matrix: se devuelve solo el score "
+            "ponderado base sin ajuste. Ejecuta calculate_correlation para cada "
+            "par y arma la matriz para obtener el score ajustado."
+        )
+    else:
+        # Validar dimensiones
+        matrix_ok = (
+            len(correlation_matrix) == n
+            and all(isinstance(row, list) and len(row) == n for row in correlation_matrix)
+        )
+        if not matrix_ok:
+            warnings.append(
+                f"correlation_matrix debe ser {n}x{n}. Se ignora y se devuelve "
+                "solo el score ponderado base."
+            )
+        elif n < 2:
+            # Con una sola posición no hay pares que correlacionar
+            warnings.append(
+                "Portafolio de una sola posición: correlación no aplica. "
+                "Score = risk_score de la única posición."
+            )
+        else:
+            # ── 3. Correlación promedio ponderada por pares (i < j) ──
+            # Peso de cada par = w_i × w_j. Con pesos normalizados a 1, esto
+            # le da importancia relativa correcta a cada par según el tamaño
+            # combinado de las dos posiciones.
+            num = 0.0
+            den = 0.0
+            for i in range(n):
+                for j in range(i + 1, n):
+                    try:
+                        c = float(correlation_matrix[i][j])
+                    except (TypeError, ValueError):
+                        warnings.append(
+                            f"correlation_matrix[{i}][{j}] no es numérico. "
+                            "Se ignora la matriz."
+                        )
+                        num = den = 0.0
+                        break
+                    # Clamp defensivo: Pearson ∈ [-1, 1]
+                    if c < -1.0 or c > 1.0:
+                        warnings.append(
+                            f"correlation_matrix[{i}][{j}]={c:.3f} fuera de "
+                            "[-1, 1]. Se satura."
+                        )
+                        c = max(-1.0, min(1.0, c))
+                    pair_weight = weights[i] * weights[j]
+                    num += pair_weight * c
+                    den += pair_weight
+                else:
+                    continue
+                break
+
+            if den > 0:
+                avg_weighted_corr = num / den
+
+                # ── 4. Regla de ajuste (R6 v2) ──
+                if avg_weighted_corr > 0.7:
+                    adjustment = 1.0
+                elif avg_weighted_corr < 0.3:
+                    adjustment = -0.5
+                else:
+                    adjustment = 0.0
+
+    # ── 5. Score final con clamp a [1, 10] ──
+    adjusted_score = weighted_score + adjustment
+    adjusted_score = max(1.0, min(10.0, adjusted_score))
+
+    # ── 6. Interpretación para el agente ──
+    if avg_weighted_corr is None:
+        interp = (
+            f"Score ponderado base: {weighted_score:.2f}. Sin ajuste por "
+            "correlación (matriz no provista o portafolio de una sola posición)."
+        )
+    elif adjustment > 0:
+        interp = (
+            f"Correlación promedio ponderada {avg_weighted_corr:.2f} > 0.7: "
+            f"las posiciones tienden a moverse juntas, la diversificación es "
+            f"aparente. Score ajustado +1.0 → {adjusted_score:.2f}."
+        )
+    elif adjustment < 0:
+        interp = (
+            f"Correlación promedio ponderada {avg_weighted_corr:.2f} < 0.3: "
+            f"diversificación real entre posiciones. Score ajustado -0.5 → "
+            f"{adjusted_score:.2f}."
+        )
+    else:
+        interp = (
+            f"Correlación promedio ponderada {avg_weighted_corr:.2f} en zona "
+            f"neutra (0.3–0.7). Sin ajuste. Score = {adjusted_score:.2f}."
+        )
+
+    risk_label = (
+        "low" if adjusted_score <= 3.5
+        else "moderate" if adjusted_score <= 6.5
+        else "high"
+    )
+
+    return {
+        "weighted_score": round(weighted_score, 2),
+        "avg_weighted_correlation": (
+            round(avg_weighted_corr, 3) if avg_weighted_corr is not None else None
+        ),
+        "correlation_adjustment": round(adjustment, 2),
+        "adjusted_score": round(adjusted_score, 2),
+        "risk_label": risk_label,
+        "n_positions": n,
+        "total_weight_pct": round(total_weight, 2),
+        "interpretation": interp,
+        "warnings": warnings,
+    }
 
 
 @mcp.tool()
