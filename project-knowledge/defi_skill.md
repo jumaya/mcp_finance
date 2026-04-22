@@ -183,13 +183,62 @@ SI APY > 100%:
 - **Para quién**: SOLO avanzados, SOLO pools de stablecoins para moderados
 - **NUNCA recomendar a principiantes**
 
+### Nivel 6 — Futures Binance USDⓈ-M (riesgo 8-10/10)
+- **Qué**: perpetuos apalancados sobre BTC / ETH / alts. Exposición direccional con leverage.
+- **Dónde**: Binance Futures (USDⓈ-M)
+- **Leverage típico aceptable**: 2-5x (nunca > 10x en un plan conservador o moderado).
+- **APY esperado**: depende totalmente de la dirección. No hay yield pasivo; el rendimiento viene del movimiento de precio (o se pierde con él).
+- **Para quién**: SOLO avanzados con stop-loss y plan de salida. NO recomendar a principiantes ni moderados.
+- **Funding rate** (ver `platforms_skill.md §2.6`):
+  - Se paga/cobra cada 8 horas (3 pagos/día).
+  - Rango típico: **-0.3% a +0.3% diario** acumulado.
+  - Convención: rate **positivo = long paga a short** (costo si estás long).
+  - Mercado alcista normal: ligeramente positivo (~+0.01% a +0.05% diario).
+  - Mercado de euforia: hasta +0.3% diario (muy costoso mantener longs).
+  - Mercado bajista: puede ser negativo (longs cobran).
+- **Escenarios con** `calculate_scenarios`:
+  ```
+  calculate_scenarios(
+    amount_usd=margen,                  ← capital propio
+    expected_apy=retorno_direccional,   ← tu tesis de precio anualizada
+    volatility_annual=0.60,             ← BTC ~0.60, ETH ~0.70, alts > 1.0
+    passive_income_annual_usd=0,        ← futures no pagan yield
+    months=horizonte,
+    leverage=leverage_elegido,          ← 2-5x
+    monthly_cost_usd=fee_trading_estimado,  ← 0.05% notional × trades esperados
+    dividend_withholding_pct=0.0,       ← no aplica
+    funding_rate_daily_pct=0.0001,      ← USAR PROMEDIO CONSERVADOR (+0.01%/día)
+                                         ← el rate real varía; +0.01% es la
+                                         ← expectativa neutral alcista
+  )
+  ```
+- **Regla de funding rate a usar**:
+  - Long en mercado neutro/alcista: `+0.0001` (+0.01%/día) como base.
+  - Long en mercado eufórico (BTC cerca de ATH, retail FOMO): `+0.0003`.
+  - Short en mercado bajista persistente: `-0.0001` (el short cobra).
+  - Si el usuario va a mantener > 7 días, **mostrar escenario pesimista con `+0.0003`** además del base: es el caso "euforia prolongada" donde el funding se come el retorno.
+- **Advertencia al usuario (obligatoria en el plan):**
+  > "En futures apalancados, una caída de {50/leverage:.0f}% en el subyacente
+  > liquida la posición. Además, mantener la posición abierta cuesta ~X%/día
+  > por funding rate, que se cobra cada 8h y varía con el sentimiento del
+  > mercado. Este modelo asume un funding promedio; puede subir 3-5x en
+  > momentos de euforia."
+
 ## Cálculos obligatorios por posición
 0. Si se opera en eToro → **Gate eToro** (arriba) antes de seguir
 1. 🧭 Si la posición es cripto spot direccional (no stablecoin/staking):
      → technical_skill.md para entrada/SL/TP sobre el OHLC de CoinGecko.
      → Si la posición NO es direccional (USDC lending, ETH staking en
        Lido, LP), saltar este paso y documentarlo.
-2. `calculate_scenarios` con APY y volatilidad del activo
+2. `calculate_scenarios` con APY y volatilidad del activo.
+     → Si es **Futures Binance (Nivel 6)**: pasar `funding_rate_daily_pct`
+       según la regla del Nivel 6 (NO usar monthly_cost_usd para funding;
+       eso es solo para fees de trading y overnight CFDs).
+     → Si es **spot / staking / Simple Earn / LP**:
+       `funding_rate_daily_pct=0.0` (no aplica; solo futures perpetuos).
+     → `dividend_withholding_pct=0.0` en todas las posiciones DeFi (cripto
+       no paga dividendos; staking rewards no son dividendos fiscales
+       retenidos en origen).
 3. `calculate_risk_score` — para stablecoins: vol=0.01, dd=-0.02. Para ETH: vol=0.15, dd=-0.35
 
 ## Cronograma (auto-generar según nivel)

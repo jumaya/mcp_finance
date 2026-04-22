@@ -87,6 +87,74 @@ Pasar como monthly_cost_usd en calculate_scenarios:
   calculate_scenarios(monto, apy, vol, 0, meses, leverage=2.0, monthly_cost_usd=1.58)
 ```
 
+## Retención de dividendos USA (SIEMPRE incluir si hay dividendos)
+
+Los dividendos pagados por emisores US a residentes no-US sin tratado
+(Colombia NO tiene tratado fiscal con US) se pagan **netos del 30% de
+retención en origen** — ver `platforms_skill.md §1.5`.
+
+```
+Regla:
+  - Si el activo es US (stock, ETF domiciliado en US: SPY, QQQ, VOO, VTI,
+    DIA, IWM, etc.) Y paga dividendo:
+       dividend_withholding_pct = 0.30
+
+  - Si el activo es US pero NO paga dividendo (TSLA, GOOGL, BRK.B, AMZN,
+    muchos de tech growth): el parámetro es irrelevante, dejar en 0.0.
+
+  - Si el activo es no-US (ETFs UCITS irlandeses, acciones UK, DE, HK,
+    etc.): la retención varía por país. Como proxy conservador:
+       - UCITS (IE): 0.00  (ya incorporado al NAV)
+       - UK listed: 0.00  (UK no retiene a no-UK holders en la mayoría)
+       - DE listed: 0.26  (Kapitalertragsteuer)
+       - HK listed: 0.00
+    Si hay duda, preguntar al usuario antes que asumir.
+
+Pasar passive_income_annual_usd como BRUTO (dividend_yield × monto, o
+el forward dividend reportado por yfinance) y dejar que
+calculate_scenarios aplique la retención. NO descontar a mano.
+```
+
+### Ejemplo concreto (SPY long spot, 12 meses)
+```
+SPY: precio $550, posición $5,000, dividend_yield ~1.3% → $65 anual bruto
+APY esperado 10%, vol 15%
+
+calculate_scenarios(
+  amount_usd=5000,
+  expected_apy=0.10,
+  volatility_annual=0.15,
+  passive_income_annual_usd=65,        ← BRUTO (no neto)
+  months=12,
+  leverage=1.0,
+  monthly_cost_usd=0.0,
+  dividend_withholding_pct=0.30,       ← US → 30%
+)
+
+Resultado en escenario base:
+  passive_income_gross_usd: 65
+  passive_income_net_usd:   45.50      ← lo que recibe el usuario
+  withholding_deducted_usd: 19.50      ← IRS lo retiene
+```
+
+### Ejemplo con CFD 2x + dividendo (SPY CFD)
+```
+CFDs en eToro reciben dividendos equivalentes (adjustment) que también
+están sujetos a retención. Combinación típica:
+
+calculate_scenarios(
+  amount_usd=500,                     ← margen
+  expected_apy=0.10,
+  volatility_annual=0.15,
+  passive_income_annual_usd=13,       ← 1.3% sobre notional de $1,000
+  months=6,
+  leverage=2.0,
+  monthly_cost_usd=4.50,              ← overnight fee mensual
+  dividend_withholding_pct=0.30,      ← SPY = US
+  funding_rate_daily_pct=0.0,         ← CFDs NO tienen funding (tienen overnight)
+)
+```
+
 ## 🚪 Gate de disponibilidad eToro (OBLIGATORIO antes de recomendar)
 
 **Regla dura:** no se muestra al usuario ningún ticker que no haya pasado
@@ -264,7 +332,12 @@ POR CADA acción candidata (en este ORDEN):
      → Los SL/TP técnicos SUSTITUYEN a cualquier SL/TP "redondo"
        (ej. -10%) que se hubiera considerado.
   4. calculate_risk_score(vol_tabla, dd_tabla, "instant", true, peso, leverage)
-  5. calculate_scenarios(monto, apy, vol_tabla, 0, meses, leverage, monthly_cost)
+  5. calculate_scenarios(
+        monto, apy, vol_tabla, passive_bruto, meses, leverage, monthly_cost,
+        dividend_withholding_pct=0.30 si US y paga dividendo (else 0.0)
+     )
+     → Pasar dividendo BRUTO; la tool aplica la retención.
+     → Ver sección "Retención de dividendos USA" arriba.
   6. Si 2+ acciones: calculate_correlation
 ```
 

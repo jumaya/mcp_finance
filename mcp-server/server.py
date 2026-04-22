@@ -5,6 +5,12 @@ v3 — Fix 1: floor mínimo de risk score por leverage
 v4 — Fix 3: validate_allocation_minimums — checkpoint determinística
      para mínimos por venue/producto (antes el §4 de platforms_skill.md
      era prosa; ahora es una tool que el agente DEBE llamar post-allocate).
+v5 — Fix 4: calculate_scenarios modela explícitamente retención de
+     dividendos (dividend_withholding_pct) y funding rate diario de
+     futures (funding_rate_daily_pct). Antes el agente tenía que
+     embutirlos en passive_income_annual_usd / monthly_cost_usd a mano
+     y se saltaba la retención del 30% USA o el funding de Binance
+     Futures (§1.5 y §2.6 de platforms_skill.md).
 
 Ejecutar: uv run --no-project --with fastmcp server.py
 """
@@ -638,7 +644,7 @@ def _find_cheaper_alternative(
 
 
 # ============================================================
-# SCENARIOS — v3 (con monthly_cost_usd)
+# SCENARIOS — v5 (con dividend_withholding_pct y funding_rate_daily_pct)
 # ============================================================
 
 @mcp.tool()
@@ -650,22 +656,83 @@ def calculate_scenarios(
     months: int = 12,
     leverage: float = 1.0,
     monthly_cost_usd: float = 0.0,
+    dividend_withholding_pct: float = 0.0,
+    funding_rate_daily_pct: float = 0.0,
 ) -> dict:
     """
     Calcula 3 escenarios (optimista, base, pesimista) para una posicion de inversion.
 
     Args:
-        amount_usd: Monto invertido (capital propio)
-        expected_apy: Rendimiento anual esperado del activo subyacente (ej: 0.10 = 10%)
-        volatility_annual: Volatilidad anualizada del activo (ej: 0.15 = 15%)
-        passive_income_annual_usd: Ingreso pasivo anual fijo (dividendos, staking)
-        months: Horizonte en meses
-        leverage: Apalancamiento (1.0 = spot, 2.0 = CFD 2x)
-        monthly_cost_usd: Costo mensual fijo (overnight fees CFDs). Se resta del rendimiento.
+        amount_usd: Monto invertido (capital propio en USD).
+        expected_apy: Rendimiento anual esperado del activo subyacente
+            (ej: 0.10 = 10%). Aplica al precio, no incluye ingreso pasivo.
+        volatility_annual: Volatilidad anualizada del activo (ej: 0.15 = 15%).
+        passive_income_annual_usd: Ingreso pasivo anual BRUTO en USD
+            (dividendos antes de retención, rewards de staking, intereses
+            de Simple Earn). El neto efectivo se calcula aplicando
+            dividend_withholding_pct.
+        months: Horizonte en meses.
+        leverage: Apalancamiento (1.0 = spot, 2.0 = CFD 2x, etc.). El
+            notional expuesto es amount_usd * leverage.
+        monthly_cost_usd: Costo mensual fijo en USD (ej: overnight fees de
+            CFDs, fees por inactividad). Se resta lineal del resultado.
+        dividend_withholding_pct: Fracción de retención en origen sobre
+            passive_income_annual_usd (ej: 0.30 para acciones US que pagan
+            dividendos a residentes no-US sin tratado, tal como indica
+            platforms_skill §1.5). Default 0.0 (sin retención) para que
+            no altere a posiciones que no son dividend-paying (cripto
+            staking, APY de Simple Earn, intereses DeFi, etc.).
+            Rango válido: [0.0, 1.0].
+        funding_rate_daily_pct: Funding rate PROMEDIO diario para futures
+            perpetuos (ej: Binance USDⓈ-M), expresado como fracción
+            (ej: 0.0003 = 0.03%/día ≈ 11%/año sobre notional). Convención:
+            valor POSITIVO = costo para el LONG (paga a los shorts);
+            valor NEGATIVO = ingreso para el long. Se aplica sobre el
+            notional apalancado (amount_usd * leverage), NO sobre el
+            margen. platforms_skill §2.6 documenta que el rango típico es
+            -0.3% a +0.3% diario. Default 0.0 (ignorado) para que no
+            afecte a posiciones spot / CFDs eToro / DeFi passive.
+
+    Convenciones:
+        * passive_income_annual_usd se prorratea por months/12 y luego se
+          aplica la retención: passive_neto = passive_bruto * factor
+          * (1 - dividend_withholding_pct).
+        * funding_cost = notional * funding_rate_daily_pct * días.
+          Si el rate es +, el costo es positivo (reduce retorno).
+          Si el rate es -, el costo es negativo (suma al retorno).
+        * Los costos (monthly_cost_usd, funding) NO se multiplican por
+          leverage aquí porque se asume que el agente ya los pasa
+          calculados sobre el notional correspondiente (el caso de
+          overnight fees eToro en equity_skill), EXCEPTO el funding, que
+          SÍ se multiplica automáticamente por leverage porque su
+          definición de mercado es sobre el notional.
     """
+    # Validaciones defensivas (no lanzan excepción, recortan a rangos sanos)
+    if dividend_withholding_pct < 0:
+        dividend_withholding_pct = 0.0
+    if dividend_withholding_pct > 1:
+        dividend_withholding_pct = 1.0
+
     factor = months / 12.0
-    passive = passive_income_annual_usd * factor
-    total_costs = monthly_cost_usd * months
+    days = months * 30  # convención consistente con monthly_cost_usd
+
+    # Ingreso pasivo neto de retención en origen
+    passive_gross = passive_income_annual_usd * factor
+    passive_net = passive_gross * (1.0 - dividend_withholding_pct)
+    withholding_deducted = passive_gross - passive_net
+
+    # Costos fijos mensuales (overnight CFD, inactividad)
+    total_monthly_costs = monthly_cost_usd * months
+
+    # Funding rate sobre notional apalancado. Positivo = costo.
+    # Nota: el signo del total es el mismo que el del rate; si rate > 0
+    # incrementa total_costs (resta al retorno); si rate < 0 lo reduce
+    # (suma al retorno).
+    notional = amount_usd * leverage
+    total_funding_cost = notional * funding_rate_daily_pct * days
+
+    # Total de costos (puede ser negativo si el funding neto es ingreso)
+    total_costs = total_monthly_costs + total_funding_cost
 
     optimistic_base = (expected_apy + volatility_annual) * factor
     base_base = expected_apy * factor
@@ -679,14 +746,18 @@ def calculate_scenarios(
     ]:
         change = max(change_base * leverage, -1.0)
         price_impact = amount_usd * change
-        total = price_impact + passive - total_costs
+        total = price_impact + passive_net - total_costs
         scenarios.append({
             "name": name,
             "probability_pct": prob,
             "asset_change_pct": round(change_base * 100, 1),
             "leveraged_change_pct": round(change * 100, 1),
             "price_impact_usd": round(price_impact, 2),
-            "passive_income_usd": round(passive, 2),
+            "passive_income_gross_usd": round(passive_gross, 2),
+            "passive_income_net_usd": round(passive_net, 2),
+            "withholding_deducted_usd": round(withholding_deducted, 2),
+            "monthly_costs_usd": round(total_monthly_costs, 2),
+            "funding_cost_usd": round(total_funding_cost, 2),
             "costs_usd": round(total_costs, 2),
             "total_return_usd": round(total, 2),
             "total_return_pct": round(total / amount_usd * 100, 1) if amount_usd > 0 else 0,
@@ -694,14 +765,41 @@ def calculate_scenarios(
             "liquidated": change <= -1.0,
         })
 
+    # Advertencias para que el agente no pase valores absurdos sin darse cuenta
+    warnings = []
+    if funding_rate_daily_pct != 0.0 and leverage <= 1.0:
+        warnings.append(
+            "funding_rate_daily_pct != 0 con leverage=1.0: el funding rate solo "
+            "aplica a futures perpetuos (leverage > 1). Revisar si la posición "
+            "es realmente de futures."
+        )
+    if abs(funding_rate_daily_pct) > 0.003:
+        warnings.append(
+            f"funding_rate_daily_pct={funding_rate_daily_pct:.4f} fuera del rango "
+            f"típico [-0.003, +0.003] documentado en platforms_skill §2.6. "
+            f"Verificar que sea un rate diario (no anual ni por 8h)."
+        )
+    if dividend_withholding_pct > 0 and passive_income_annual_usd <= 0:
+        warnings.append(
+            "dividend_withholding_pct > 0 pero passive_income_annual_usd = 0: "
+            "la retención no tiene efecto. ¿Se olvidó pasar el dividendo bruto?"
+        )
+
     return {
         "amount_usd": amount_usd,
         "leverage": leverage,
-        "effective_exposure": round(amount_usd * leverage, 2),
+        "effective_exposure": round(notional, 2),
         "monthly_cost_usd": monthly_cost_usd,
-        "total_costs_over_period": round(total_costs, 2),
+        "total_monthly_costs_over_period": round(total_monthly_costs, 2),
+        "dividend_withholding_pct": dividend_withholding_pct,
+        "passive_income_gross_over_period": round(passive_gross, 2),
+        "passive_income_net_over_period": round(passive_net, 2),
+        "withholding_deducted_over_period": round(withholding_deducted, 2),
+        "funding_rate_daily_pct": funding_rate_daily_pct,
+        "funding_cost_over_period": round(total_funding_cost, 2),
         "horizon_months": months,
         "scenarios": scenarios,
+        "warnings": warnings,
     }
 
 
