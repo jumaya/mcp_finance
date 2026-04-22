@@ -457,56 +457,142 @@ VERTICAL = "commodities":
 
 ---
 
-## 4. Validación de mínimos en el plan (Paso pre-presentación)
+## 4. Validación de mínimos en el plan — TOOL DETERMINÍSTICA
 
-Antes de que `plan_template.md` genere el JSX final, recorrer cada
-posición y aplicar:
+> **Cambio v2:** esta sección antes describía el algoritmo en prosa y
+> dependía de que el agente lo recordara. Ahora es una **tool del MCP
+> propio** que SIEMPRE se llama después de `allocate_portfolio` y
+> ANTES del gate de `search_instruments`. No es opcional: el plan no
+> avanza a generación de JSX si esta tool devuelve `is_valid: false`
+> y no se aplicó `adjusted_allocation_usd` o una de las `suggestions`.
+
+### 4.1 Cómo llamarla
 
 ```
-POR CADA posición del plan:
-  capital_posicion = total_capital × peso_posicion
+Tool:    investment-calculators.validate_allocation_minimums
+Entrada: 
+  allocation_usd: dict  ← directamente el campo allocation_usd
+                          que devolvió allocate_portfolio
+  venue_map:      dict  ← plan de ejecución por vertical (abajo)
 
-  Si venue == "eToro":
-    tipo = "stock_spot" | "etf_spot" | "crypto_spot"
-      Si capital_posicion < USD $10:
-        VIOLACIÓN → consolidar o cambiar venue
-    tipo == "cfd_*":
-      Si capital_posicion < USD $50 (margen):
-        VIOLACIÓN → idem
-    tipo == "copy_trader":
-      Si capital_posicion < USD $200:
-        VIOLACIÓN → aumentar peso a $200 min o quitar del plan
-    tipo == "smart_portfolio":
-      Si capital_posicion < USD $500:
-        VIOLACIÓN → idem
-    tipo == "top_trader_portfolio":
-      Si capital_posicion < USD $5,000:
-        VIOLACIÓN → fuera del alcance salvo capital grande
-
-  Si venue == "Binance":
-    tipo == "spot_crypto":
-      Si capital_posicion < USD $10 (equivalente):
-        → técnicamente Binance permite montos menores (depende del par),
-          pero el plan no debería proponer < $10 por ruido de comisiones
-    tipo == "simple_earn":
-      Sin mínimo significativo; OK desde $1
-    tipo == "futures":
-      Depende del par y leverage; advertir al usuario de
-      calcular notional mínimo antes de operar
-
-  Si una posición no pasa:
-    1. Intentar consolidar (subir peso fusionando con otra similar)
-    2. Si no se puede, cambiar venue (ej. una posición crypto en
-       eToro < $10 se mueve a Binance si ya hay exposición ahí)
-    3. Si no se puede ni consolidar ni mover, eliminar del plan
-       y redistribuir a las posiciones supervivientes
-    4. SIEMPRE avisar al usuario: "X se eliminó/movió porque
-       $<monto> está por debajo del mínimo de <venue>"
+Salida:
+  is_valid:                  bool   — True si todas las posiciones cumplen mínimo
+  violations:                list   — posiciones inválidas con venue, producto, gap y motivo
+  suggestions:               list   — acción concreta por cada violación
+                                      (consolidate / switch_venue / drop_and_redistribute / verify_venue)
+  adjusted_allocation_usd:   dict   — allocation_usd corregido (solo refleja los drops;
+                                      consolidate y switch_venue no mueven capital entre verticales)
+  allocation_changed:        bool
+  normalization_warnings:    list   — pesos dentro del vertical que no sumaban 1.0 y fueron normalizados
+  unknown_venues:            list   — venues fuera de la tabla de mínimos conocidos
+  summary:                   str    — texto listo para mostrar al usuario
 ```
 
-Esta validación se ejecuta **después** del allocate_portfolio y **antes**
-del gate de search_instruments (si falla aquí, no vale la pena gastar
-tool calls del gate).
+### 4.2 Cómo construir `venue_map`
+
+Un vertical puede mapear a **uno o varios buckets** (p. ej. DeFi dividido
+entre Binance spot y Aave supply). Cada bucket declara venue, tipo de
+producto, número de posiciones y su peso dentro del vertical.
+
+```python
+venue_map = {
+  "equity": [
+    {"venue": "eToro",   "product_type": "stock_spot",   "num_positions": 3, "weight_within_vertical": 1.0}
+  ],
+  "defi": [
+    {"venue": "Binance", "product_type": "spot_crypto",  "num_positions": 2, "weight_within_vertical": 0.7},
+    {"venue": "Aave",    "product_type": "supply",       "num_positions": 1, "weight_within_vertical": 0.3}
+  ],
+  "forex": [
+    {"venue": "Capital.com", "product_type": "cfd_forex","num_positions": 1, "weight_within_vertical": 1.0}
+  ],
+  "social": [
+    {"venue": "eToro",   "product_type": "copy_trader",  "num_positions": 1, "weight_within_vertical": 1.0}
+  ],
+  "reserve": [
+    {"venue": "Binance", "product_type": "simple_earn",  "num_positions": 1, "weight_within_vertical": 1.0}
+  ],
+}
+```
+
+`product_type` válidos (coincidir exactamente con la tabla `VENUE_MINIMUMS_USD` del server):
+
+| Venue | product_type |
+|---|---|
+| eToro | `stock_spot`, `etf_spot`, `crypto_spot`, `cfd_stock`, `cfd_etf`, `cfd_crypto`, `cfd_forex`, `cfd_commodity`, `cfd_index`, `copy_trader`, `smart_portfolio`, `top_trader_portfolio` |
+| Binance | `spot_crypto`, `simple_earn`, `futures`, `staking`, `copy_trading` |
+| Capital.com | `cfd_forex`, `cfd_commodity`, `cfd_stock`, `cfd_index` |
+| Aave | `supply`, `borrow` |
+| Lido | `stake_eth` |
+| Ethena | `susde` |
+
+Los mínimos exactos viven en `mcp-server/server.py` → `VENUE_MINIMUMS_USD`.
+**Si un mínimo cambia en la plataforma real, se actualiza AHÍ**, no en
+prosa aquí; este skill solo explica la tabla y cómo llamar la tool.
+
+### 4.3 Qué hacer con cada acción devuelta
+
+```
+action = "consolidate"
+  → Reducir num_positions para ese bucket al valor `to_positions`
+    antes de presentar el plan. El capital del vertical no cambia,
+    solo cuántas posiciones se abren.
+  → Ej: 5 tickers US de $6 c/u → 3 tickers US de $10 c/u.
+
+action = "switch_venue"
+  → Cambiar el venue (y opcionalmente product_type) del bucket a los
+    valores `to_venue` / `to_product_type`. El capital del vertical
+    no cambia. Requiere avisar al usuario: "movimos forex a
+    Capital.com porque en eToro el mínimo de margen ($50) no cabe
+    con tu asignación ($25)".
+
+action = "drop_and_redistribute"
+  → Eliminar el bucket. `adjusted_allocation_usd` ya lo hizo: restó
+    ese capital del vertical y lo sumó a reserve. Avisar al usuario
+    del cambio y por qué.
+
+action = "verify_venue"
+  → El agente propuso un venue que no está en la tabla. Opciones:
+    (1) corregir a un venue canónico del stack (eToro/Binance/
+    Capital.com/Aave/Lido/Ethena), o (2) pedir al mantenedor
+    añadirlo a `VENUE_MINIMUMS_USD`. No presentar plan con venues
+    no validables.
+
+action = "fix_product_type"
+  → El agente escribió un product_type no existente para ese venue.
+    Corregir antes de reintentar.
+```
+
+### 4.4 Flujo integrado (obligatorio)
+
+```
+1. allocate_portfolio(...)            → allocation_usd por vertical
+2. construir venue_map según §3       (árbol de decisión eToro/Binance/Capital.com)
+3. validate_allocation_minimums(
+     allocation_usd=...,
+     venue_map=...
+   )                                  → is_valid + violations + suggestions
+4. Si is_valid == False:
+     Aplicar suggestions (consolidate / switch / drop) o usar
+     adjusted_allocation_usd.
+     REVALIDAR llamando la tool otra vez con el plan corregido.
+5. Solo cuando is_valid == True:
+     → pasar al gate de search_instruments de los skills verticales
+     → luego a calculate_scenarios, stress_test_portfolio, etc.
+     → finalmente a plan_template.md para generar JSX.
+```
+
+### 4.5 Por qué una tool y no prosa
+
+- **Determinístico:** el plan se bloquea si falla, no depende de que
+  el agente recuerde revisar.
+- **Single source of truth:** los mínimos viven en el server, no
+  duplicados en prosa de varios skills.
+- **Trazable:** el usuario puede ver violations/suggestions tal como
+  vinieron de la tool; no es "opinión" del agente.
+- **Actualizable:** si eToro cambia copy_trader de $200 a $250, se
+  cambia UN valor en `VENUE_MINIMUMS_USD` y se propaga a todo el
+  sistema.
 
 ---
 
@@ -613,8 +699,9 @@ de entrada/salida: -3%").
 
 Antes de la salida JSX del `plan_template`, confirmar:
 
-1. ¿Cada posición en eToro cumple su mínimo (stock/ETF/crypto $10,
-   CFD $50 margen, copy $200, smart portfolio $500)?
+1. ¿Se llamó `validate_allocation_minimums` con el `allocation_usd`
+   de `allocate_portfolio` y un `venue_map` completo, y devolvió
+   `is_valid: true`? (ver §4 — esta checkpoint NO es opcional)
 2. ¿Cada posición en Binance tiene un par viable y el token está
    en la lista confirmada o fue validado con el usuario?
 3. ¿El flujo de entrada está claro (PSE, tarjeta o P2P) y sus costos
@@ -624,6 +711,7 @@ Antes de la salida JSX del `plan_template`, confirmar:
    0.1% crypto Binance, etc.)?
 6. ¿Los overnight fees de CFDs están en `monthly_cost_usd`?
 7. ¿Si hay capital < $1,000, el número de posiciones es ≤ 3-4 para
-   no violar mínimos?
+   no violar mínimos? (la tool del §4 lo valida, pero mantener
+   el instinto de diseño simple en capital bajo)
 
 Si alguna es "no", el plan se ajusta antes de generar JSX.
