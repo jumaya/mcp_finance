@@ -1,4 +1,4 @@
-# Skill: Seguimiento post-inversión — v4
+# Skill: Seguimiento post-inversión — v5
 
 ## Propósito
 Comparar el estado ACTUAL del portafolio del usuario contra el plan ORIGINAL entregado en una sesión previa, detectar desviaciones, generar alertas semáforo y recomendar acciones (rebalanceo, DCA, cierre, ampliación) sin inventar números.
@@ -43,52 +43,75 @@ Precios actuales para validación cruzada o si falta:
 - Forex → `metatrader.get_symbol_price` o `alphavantage`.
 - eToro (cualquier clase) → `etoro-server.get_rates` con el instrumentId (útil para confirmar el precio del plan).
 
-### Fase C — Calcular desviaciones (usar tools, no estimar a ojo)
+### Fase C — Calcular desviaciones (una sola tool)
 
-Para cada posición del baseline, calcular y mostrar:
-- **P&L absoluto**: `cantidad × (precio_actual − precio_entrada)`.
-- **P&L porcentual**: `(precio_actual / precio_entrada) − 1`.
-- Para posiciones en eToro, usar el `unrealizedPnL` que ya devuelve `get_portfolio` — no recalcular, solo verificar que cuadra.
-- **Peso actual**: `valor_actual_posición / valor_total_portfolio`.
-- **Desviación de peso**: `peso_actual − peso_objetivo` (en puntos porcentuales).
-- **P&L total del portafolio**: suma de P&L absolutos / capital total del plan.
-- **Tiempo transcurrido**: días desde `fecha_inicio` del baseline.
+**Esto NO se hace en prompting.** La aritmética del tracking (P&L absoluto y %, desviaciones de peso, detección de nuevas/cerradas, clasificación semáforo por umbrales) es una checkpoint determinística en el MCP propio. En un portafolio con 5+ posiciones, hacer estos cálculos a mano es propenso a errores de arrastre (un peso mal calculado desplaza todos los demás) y viola el principio #1 de system.md.
 
-Identificar también:
-- Posiciones NUEVAS (están hoy pero no en el baseline) → marcar como "fuera de plan".
-- Posiciones ELIMINADAS (estaban en el baseline, no están hoy) → preguntar al usuario qué pasó (cerradas manualmente, SL, TP).
+Llamar **una sola tool**: `investment-calculators.compare_portfolio_to_baseline`.
 
-Si hay CFDs o posiciones apalancadas, recalcular **stress test con los pesos ACTUALES** (no los objetivo) vía `calculate_scenarios` / `stress_test_portfolio` para saber cuánto se arriesga HOY, no cuánto se planificaba arriesgar.
+Entrada:
+- `baseline`: el bloque `BASELINE DE SEGUIMIENTO` parseado (schema al final de este documento).
+- `current_positions`: lista construida a partir de las fuentes de Fase B. Cada posición debe traer al menos `ticker`, `quantity`, `current_price` y (si se pudo obtener) `current_value_usd`, `unrealized_pnl_usd`, `venue`.
+  - Para posiciones de eToro: mapear directo desde `etoro-server.get_portfolio` (ya viene `unrealizedPnL`, valor actual y precio de entrada real — preferir siempre el `unrealized_pnl_usd` que da la plataforma sobre recálculos propios).
+  - Para posiciones en MetaTrader: usar `metatrader.get_all_positions`.
+  - Para posiciones fuera de eToro/MT5: construir con los datos que el usuario pegó + precio actual de `coingecko.get_simple_price` / `yahoo-finance.yfinance_get_ticker_info` / `metatrader.get_symbol_price`.
 
-Si hubo rebalanceos o cierres desde la última revisión, recalcular **correlación actual** entre las posiciones vivas vía `calculate_correlation` — la correlación cambia con el tiempo y puede invalidar una de las tesis del plan original.
+Salida de la tool (todo lo que el reporte necesita ya viene calculado):
+- `summary`: P&L total absoluto y %, valor actual total, capital inicial, conteos.
+- `positions[]`: por posición, peso actual, peso objetivo, desviación en p.p., P&L abs y %, **status semáforo** y `status_reasons`.
+- `new_positions[]`: posiciones fuera de plan.
+- `closed_positions[]`: posiciones del baseline que ya no están (el agente debe preguntar motivo y P&L realizado).
+- `alerts[]`: alertas ordenadas por severidad (🔴 → 🟡), con `ticker` y `reasons`.
+- `warnings[]`: problemas de data (campos faltantes, pesos que no suman 100, etc.) — si hay, mencionarlos en el reporte antes de las conclusiones.
+
+**El agente no recalcula nada de esto en prompting.** Lee el dict y lo presenta.
+
+Las capas que la tool NO cubre (cualitativas o que requieren datos adicionales) sí siguen en prompting y requieren sus propias tools:
+
+- **Stress test con pesos actuales**: si hay CFDs o posiciones apalancadas, llamar `stress_test_portfolio` con los pesos actuales que devolvió `compare_portfolio_to_baseline` (campo `weight_current_pct`), no con los objetivo.
+- **Correlación actual**: si hubo rebalanceos o cierres, usar `calculate_correlation` sobre las posiciones vivas.
+- **Catalizadores pendientes**: earnings en < 7 días → `yfinance_get_ticker_info.earningsTimestampStart`.
+- **SL técnico alcanzado**: comparar `current_price` del reporte contra `stop_loss` del baseline posición por posición (comparación simple, una línea de lógica — no es "aritmética de portafolio").
+- **DeFi APY vs baseline**: refetch del APY actual del pool vs el del baseline.
+- **Copy trader: drawdown o cambio de estrategia**: `etoro-server.get_user_performance`.
+- **Tiempo transcurrido**: días entre `baseline.plan_date` y hoy.
 
 ### Fase D — Diagnóstico con alertas semáforo
 
-Clasificar cada posición (y el portafolio global) según estos umbrales:
+Las alertas por P&L y desviación de peso ya vienen clasificadas en `result["alerts"]` por `compare_portfolio_to_baseline`. Umbrales usados (fuente de verdad en `mcp-server/server.py` → `_TRACKING_THRESHOLDS`):
 
 ```
-🔴 CRÍTICO — acción en ≤ 48h
-  - Pérdida absoluta > 15% en cualquier posición
-  - SL técnico del plan original alcanzado (ver technical_skill.md en el baseline)
-  - DeFi APY cayó > 50% vs baseline
-  - Copy trader: drawdown > 20% o cambio de estrategia detectado
+🔴 CRÍTICO (acción en ≤ 48h) — ya clasificado por la tool
+  - Pérdida > 15% en una posición
   - Desviación de peso > 15 p.p. vs objetivo
-  - Correlación recalculada > 0.85 entre 2 posiciones grandes del portafolio
 
-🟡 ATENCIÓN — revisar en días
+🟡 ATENCIÓN (revisar en días) — ya clasificado por la tool
   - Pérdida entre 5% y 15%
+  - Desviación de peso entre 5 y 15 p.p.
+  - Posiciones nuevas fuera de plan
+  - Posiciones del baseline que ya no están abiertas
+```
+
+A la lista que devuelve la tool, el agente AÑADE las alertas que dependen de otras tools (y que por tanto no están en el payload de `compare_portfolio_to_baseline`):
+
+```
+🔴 CRÍTICO adicional (requiere otras tools)
+  - SL técnico del plan original alcanzado (comparar current_price vs baseline.stop_loss)
+  - DeFi APY cayó > 50% vs baseline (refetch APY del pool)
+  - Copy trader: drawdown > 20% o cambio de estrategia (get_user_performance)
+  - Correlación recalculada > 0.85 entre 2 posiciones grandes (calculate_correlation)
+
+🟡 ATENCIÓN adicional
   - Correlación recalculada entre 0.7 y 0.85
   - Un vertical > 40% del portafolio total
-  - Desviación de peso entre 5 y 15 p.p.
-  - Earnings de una acción del plan en < 7 días
-    (consultar yfinance_get_ticker_info → earningsTimestampStart)
+  - Earnings de una acción del plan en < 7 días (yfinance earningsTimestampStart)
   - Stress test severo actual excede el del plan original en > 10 p.p.
 
 🟢 OK
-  - P&L dentro del rango base proyectado
-  - Asignación dentro de ±5 p.p. del objetivo
-  - Correlaciones estables
+  - Posiciones que la tool devuelve con status "🟢" y sin alertas adicionales
 ```
+
+Si se cambia un umbral aquí, cambiar también `_TRACKING_THRESHOLDS` en `server.py` — son la misma fuente de verdad.
 
 Para CADA alerta, proponer una acción concreta basada en las reglas del plan original y de `risk_rules.md`:
 
@@ -100,31 +123,55 @@ Para CADA alerta, proponer una acción concreta basada en las reglas del plan or
 
 ### Fase E — Entregar el reporte de seguimiento
 
+Todo el contenido numérico viene de la respuesta de `compare_portfolio_to_baseline`. El agente mapea del dict al reporte — no reinterpreta ni recalcula.
+
 Estructura obligatoria (es un artifact más liviano que el plan_template, NO los 4 tabs del plan):
 
 ```
 🎯 SEGUIMIENTO — [fecha DD-MM-AAAA] | [N días desde el plan original]
 
 1. RESUMEN EJECUTIVO (3 líneas máximo)
-   - P&L total: +/−X% ($Y de $Z inicial) — fuente: eToro get_portfolio
-   - Alertas: N 🔴 + M 🟡 + K 🟢
-   - Acción principal recomendada (o "sin acción requerida")
+   - P&L total: {summary.pnl_total_pct} ({summary.pnl_total_abs_usd} de
+     {summary.capital_initial_usd} inicial) — fuente: compare_portfolio_to_baseline,
+     alimentada por eToro get_portfolio / MetaTrader / datos del usuario.
+   - Alertas: {summary.alert_counts.red} 🔴 + {summary.alert_counts.yellow} 🟡
+     + {summary.alert_counts.green} 🟢.
+   - Acción principal recomendada (derivada de alerts[0] si hay 🔴,
+     o "sin acción requerida" si todas son 🟢).
+   - Si el payload trae warnings[] no vacío, mencionar "⚠️ data incompleta:
+     {warnings}" antes de cualquier conclusión.
 
 2. POSICIÓN POR POSICIÓN (tabla)
+   Una fila por cada elemento de positions[]:
    | Ticker | Venue | Peso actual | Peso obj. | Desv p.p. | P&L % | P&L $ | Estado |
-   Posiciones nuevas (fuera del plan) en una fila marcada "⚠️ fuera de plan".
-   Posiciones cerradas desde última revisión listadas aparte con motivo y P&L realizado.
+   Mapeo: ticker → ticker, venue → venue, weight_current_pct → "Peso actual",
+   weight_target_pct → "Peso obj.", weight_deviation_pp → "Desv p.p.",
+   pnl_pct → "P&L %", pnl_abs_usd → "P&L $", status → "Estado".
+   Si pnl_abs_source = "computed" (no platform), anotar "(computed)" junto al P&L.
 
-3. ALERTAS 🔴 / 🟡 (ordenadas por gravedad)
+   Debajo de la tabla principal:
+   - Posiciones de new_positions[]: fila marcada "⚠️ fuera de plan"
+     con ticker, venue, current_value_usd, weight_current_pct y note.
+   - Posiciones de closed_positions[]: listarlas aparte y PREGUNTAR AL USUARIO
+     motivo de cierre y P&L realizado. La tool avisa explícitamente que no
+     puede saberlo — no inventar.
+
+3. ALERTAS 🔴 / 🟡 (iterar sobre alerts[], ya vienen ordenadas por severidad)
    Por cada alerta:
-   - Qué pasó (con números)
-   - Por qué es alerta (umbral cruzado)
-   - Acción recomendada (concreta, con cantidades)
-   - Pasos operativos en la plataforma
+   - Qué pasó: ticker + reasons[] (los motivos ya están redactados por la tool).
+   - Números: pnl_pct y weight_deviation_pp si no son null.
+   - Acción recomendada (concreta, con cantidades) — aquí el agente SÍ aporta,
+     cruzando con risk_rules.md y platforms_skill.md.
+   - Pasos operativos en la plataforma.
+
+   Añadir a esta lista las alertas de Fase D que NO vienen en el payload
+   (SL técnico, correlación recalculada, earnings < 7 días, DeFi APY,
+   copy trader drawdown) y que el agente calculó con otras tools.
 
 4. REBALANCEO SUGERIDO (si aplica)
+   Gatillo: alguna posición con abs(weight_deviation_pp) > 5 en el payload.
    - Tabla: qué vender, qué comprar, cuánto USD, en qué plataforma.
-   - Verificar cada ticker de eToro pasa el gate search_instruments antes de escribirlo.      
+   - Verificar cada ticker de eToro pasa el gate search_instruments antes de escribirlo.
 
 5. NUEVO BASELINE DE SEGUIMIENTO (JSON actualizado)
    Bloque listo para que el usuario guarde y pegue en la próxima sesión.
@@ -152,6 +199,8 @@ ANUAL: consolidar rendimientos reales del año.
 - **No alterar risk_rules.** Si el rebalanceo propuesto empujaría el portafolio fuera de los límites del perfil (concentración, % defensivo, leverage promedio), marcarlo y proponer alternativa que respete los límites.
 - **Honestidad cuando no hay señal.** Si el plan va razonablemente y no hay nada que hacer, decirlo explícito: "Plan en rango. Próxima revisión: [fecha]. No hay acción requerida." No inventar "ajustes tácticos" para parecer útil.
 - **Si `get_portfolio` falla o devuelve vacío**, decirlo explícito y ofrecer el camino alternativo (pedir posiciones al usuario). No rellenar.
+- **No recalcular la aritmética del tracking en prompting.** Si el agente necesita P&L, desviación de peso o clasificación semáforo por umbrales, la fuente es `compare_portfolio_to_baseline`. Hacer la aritmética "a mano" viola el principio #1 de system.md.
+- **Warnings de la tool siempre visibles.** Si `compare_portfolio_to_baseline` devuelve `warnings[]` no vacío (capital=0, pesos que no suman 100, entry_price faltante, etc.), mencionarlos explícitamente al inicio del reporte antes de presentar conclusiones. El usuario debe saber qué parte del análisis está sobre data incompleta.
 
 ## Schema del BASELINE DE SEGUIMIENTO
 

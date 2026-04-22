@@ -11,6 +11,14 @@ v5 — Fix 4: calculate_scenarios modela explícitamente retención de
      embutirlos en passive_income_annual_usd / monthly_cost_usd a mano
      y se saltaba la retención del 30% USA o el funding de Binance
      Futures (§1.5 y §2.6 de platforms_skill.md).
+v6 — Fix 5: compare_portfolio_to_baseline — checkpoint determinística
+     para seguimiento post-inversión. Antes el tracking_skill.md hacía
+     P&L, desviaciones de peso, detección de nuevas/cerradas y alertas
+     semáforo (§Fase D) en prompting, lo cual es propenso a errores de
+     aritmética en portafolios con 5+ posiciones y viola el principio
+     #1 de system.md ("nunca inventes números; si no tienes el dato,
+     consúltalo con una tool"). Ahora la aritmética del tracking es
+     una tool.
 
 Ejecutar: uv run --no-project --with fastmcp server.py
 """
@@ -799,6 +807,405 @@ def calculate_scenarios(
         "funding_cost_over_period": round(total_funding_cost, 2),
         "horizon_months": months,
         "scenarios": scenarios,
+        "warnings": warnings,
+    }
+
+
+# ============================================================
+# TRACKING — v6 (Fix 5)
+# compare_portfolio_to_baseline
+#
+# Objetivo: convertir la aritmética del tracking_skill.md (§Fase C
+# cálculos y §Fase D alertas semáforo) en una tool determinística.
+# Antes el agente estimaba P&L, desviaciones de peso, P&L total y
+# clasificación semáforo en prompting. En un portafolio con 5+
+# posiciones eso es propenso a errores de redondeo y de arrastre
+# (ej. un peso mal calculado desplaza todos los demás).
+#
+# Esta tool NO toma decisiones de qué hacer (eso es del skill, que
+# cruza con risk_rules.md y platforms_skill.md). Solo entrega los
+# números crudos + la clasificación semáforo por umbral.
+# ============================================================
+
+# Umbrales de Fase D del tracking_skill.md. Single source of truth:
+# si cambia un umbral en el skill, se cambia AQUÍ y queda reflejado
+# en la clasificación. Idéntico patrón al de VENUE_MINIMUMS_USD.
+_TRACKING_THRESHOLDS = {
+    # P&L por posición (porcentual, negativo = pérdida)
+    "pnl_pct_critical": -0.15,   # 🔴 pérdida > 15%
+    "pnl_pct_warning":  -0.05,   # 🟡 pérdida entre 5% y 15%
+    # Desviación de peso absoluta en puntos porcentuales
+    "weight_dev_critical_pp": 15.0,  # 🔴 desviación > 15 p.p.
+    "weight_dev_warning_pp":   5.0,  # 🟡 desviación entre 5 y 15 p.p.
+}
+
+
+@mcp.tool()
+def compare_portfolio_to_baseline(
+    baseline: dict,
+    current_positions: list[dict],
+) -> dict:
+    """
+    Compara el estado ACTUAL del portafolio contra el baseline del plan
+    original y devuelve P&L, desviaciones de peso, posiciones
+    nuevas/cerradas y alertas semáforo según los umbrales de
+    tracking_skill.md §Fase D.
+
+    Esta es la checkpoint determinística del tracking. El agente solo
+    debe llamar esta tool y PRESENTAR el resultado. No recalcular nada
+    en prompting — eso vuelve a violar el principio #1 de system.md.
+
+    Args:
+        baseline: bloque `BASELINE DE SEGUIMIENTO` parseado. Debe seguir
+            el schema de tracking_skill.md. Campos usados por esta tool:
+              - user_profile.capital_usd (float): capital total del plan.
+              - positions[]: cada posición con al menos
+                  ticker (str), weight_target_pct (float),
+                  entry_price (float), capital_assigned_usd (float).
+                Opcional pero útil: venue (str), leverage (float).
+            El resto de campos del baseline (tesis, catalyst, SL/TP,
+            risk_score, portfolio_level, schedule) no se tocan aquí —
+            viven en prompting porque son cualitativos.
+
+        current_positions: lista de posiciones vivas hoy. Cada dict:
+              - ticker (str): obligatorio, se usa para matchear contra
+                baseline.positions[].ticker (case-insensitive).
+              - quantity (float): cantidad actual.
+              - current_price (float): precio de mercado actual.
+              - current_value_usd (float, opcional): valor actual de la
+                posición. Si no viene, se calcula como
+                quantity * current_price. Útil cuando la fuente ya lo
+                da (ej. etoro-server.get_portfolio lo expone).
+              - unrealized_pnl_usd (float, opcional): si la plataforma
+                ya calcula el P&L (eToro lo hace), se usa ese valor
+                para el P&L absoluto y se recalcula solo el porcentual
+                vs entry_price. Si no viene, se calcula todo.
+              - venue (str, opcional): para trazabilidad.
+
+    Returns:
+        dict con:
+          - summary: P&L total del portafolio (abs, %), valor actual
+            total, capital inicial, conteo de alertas.
+          - positions: lista por posición con peso actual, peso
+            objetivo, desviación en p.p., P&L abs y %, status semáforo,
+            motivo del status.
+          - new_positions: posiciones que están hoy pero no en el
+            baseline (marcadas "fuera de plan").
+          - closed_positions: posiciones del baseline que ya no están
+            hoy (el agente debe preguntar al usuario el motivo y el
+            P&L realizado — la tool no lo puede saber).
+          - alerts: lista de alertas semáforo consolidadas, ordenadas
+            por severidad (🔴 primero).
+          - warnings: lista de problemas de data (campos faltantes,
+            pesos objetivo que no suman 100, etc.).
+    """
+
+    warnings: list[str] = []
+
+    # ─────────────────────────────────────────────────────────
+    # 1. Validar y extraer del baseline
+    # ─────────────────────────────────────────────────────────
+    user_profile = baseline.get("user_profile") or {}
+    capital_initial = float(user_profile.get("capital_usd") or 0.0)
+    baseline_positions = baseline.get("positions") or []
+
+    if capital_initial <= 0:
+        warnings.append(
+            "baseline.user_profile.capital_usd no está o es 0: no se puede "
+            "calcular P&L total del portafolio en %. Se reporta solo en USD."
+        )
+
+    if not baseline_positions:
+        warnings.append(
+            "baseline.positions está vacío: no hay nada contra qué comparar. "
+            "¿El baseline se parseó bien?"
+        )
+
+    # Indexar baseline por ticker (normalizado) para matching eficiente
+    baseline_by_ticker: dict[str, dict] = {}
+    weight_target_sum = 0.0
+    for p in baseline_positions:
+        tkr = str(p.get("ticker") or "").strip().upper()
+        if not tkr:
+            warnings.append("Posición del baseline sin ticker: se omite.")
+            continue
+        baseline_by_ticker[tkr] = p
+        weight_target_sum += float(p.get("weight_target_pct") or 0.0)
+
+    if baseline_positions and abs(weight_target_sum - 100.0) > 1.0:
+        warnings.append(
+            f"Los weight_target_pct del baseline suman {weight_target_sum:.1f}% "
+            f"(esperado ~100%). Las desviaciones de peso pueden estar sesgadas."
+        )
+
+    # ─────────────────────────────────────────────────────────
+    # 2. Calcular valor total actual del portafolio
+    #    (necesario ANTES de calcular pesos actuales)
+    # ─────────────────────────────────────────────────────────
+    current_by_ticker: dict[str, dict] = {}
+    total_value_current = 0.0
+
+    for cp in current_positions:
+        tkr = str(cp.get("ticker") or "").strip().upper()
+        if not tkr:
+            warnings.append("Posición actual sin ticker: se omite.")
+            continue
+
+        quantity = float(cp.get("quantity") or 0.0)
+        current_price = float(cp.get("current_price") or 0.0)
+
+        # current_value_usd es preferible si viene (la plataforma ya lo
+        # calculó con datos que la tool no tiene: fees, ajustes, etc.)
+        if cp.get("current_value_usd") is not None:
+            value = float(cp["current_value_usd"])
+        elif quantity > 0 and current_price > 0:
+            value = quantity * current_price
+        else:
+            value = 0.0
+            warnings.append(
+                f"{tkr}: sin current_value_usd y sin quantity*current_price "
+                f"válidos. Se asume valor 0 (P&L no se puede calcular bien)."
+            )
+
+        current_by_ticker[tkr] = {
+            "ticker": tkr,
+            "quantity": quantity,
+            "current_price": current_price,
+            "current_value_usd": value,
+            "unrealized_pnl_usd": cp.get("unrealized_pnl_usd"),
+            "venue": cp.get("venue"),
+        }
+        total_value_current += value
+
+    # ─────────────────────────────────────────────────────────
+    # 3. Posición por posición: match baseline ↔ actual
+    # ─────────────────────────────────────────────────────────
+    positions_report: list[dict] = []
+    alerts: list[dict] = []
+
+    for tkr, bp in baseline_by_ticker.items():
+        weight_target_pct = float(bp.get("weight_target_pct") or 0.0)
+        entry_price = float(bp.get("entry_price") or 0.0)
+        capital_assigned = float(bp.get("capital_assigned_usd") or 0.0)
+        leverage = float(bp.get("leverage") or 1.0)
+        venue_baseline = bp.get("venue")
+
+        cp = current_by_ticker.get(tkr)
+        if cp is None:
+            # Ya se reportará en closed_positions; no es una fila aquí.
+            continue
+
+        quantity = cp["quantity"]
+        current_price = cp["current_price"]
+        current_value = cp["current_value_usd"]
+
+        # ── P&L absoluto ──
+        # Preferimos el unrealized_pnl_usd de la plataforma si viene
+        # (ver tracking_skill §Fase C: "Para posiciones en eToro, usar
+        # el unrealizedPnL que ya devuelve get_portfolio — no recalcular").
+        pnl_abs_source = "platform"
+        if cp["unrealized_pnl_usd"] is not None:
+            pnl_abs = float(cp["unrealized_pnl_usd"])
+        else:
+            pnl_abs_source = "computed"
+            if entry_price > 0 and quantity > 0 and current_price > 0:
+                pnl_abs = quantity * (current_price - entry_price)
+            else:
+                pnl_abs = 0.0
+                warnings.append(
+                    f"{tkr}: falta entry_price, quantity o current_price "
+                    f"para calcular P&L absoluto. Se reporta 0."
+                )
+
+        # ── P&L porcentual ──
+        # Siempre vs entry_price del baseline (fuente de verdad del plan).
+        if entry_price > 0 and current_price > 0:
+            pnl_pct = (current_price / entry_price) - 1.0
+        elif capital_assigned > 0:
+            # Fallback: pnl_pct ≈ pnl_abs / capital_assigned.
+            # Menos preciso (ignora leverage, funding, dividendos) pero
+            # mejor que no reportar nada. Se avisa.
+            pnl_pct = pnl_abs / capital_assigned
+            warnings.append(
+                f"{tkr}: sin entry_price; P&L % estimado como "
+                f"pnl_abs / capital_assigned. Menos preciso."
+            )
+        else:
+            pnl_pct = 0.0
+            warnings.append(
+                f"{tkr}: no se puede calcular P&L % (falta entry_price y "
+                f"capital_assigned_usd). Se reporta 0."
+            )
+
+        # ── Peso actual y desviación ──
+        if total_value_current > 0:
+            weight_current_pct = (current_value / total_value_current) * 100.0
+        else:
+            weight_current_pct = 0.0
+
+        weight_dev_pp = weight_current_pct - weight_target_pct
+
+        # ── Clasificación semáforo ──
+        # Se evalúan ambas dimensiones (P&L y desviación de peso) y se
+        # queda con la peor. Umbrales desde _TRACKING_THRESHOLDS.
+        status = "🟢"
+        reasons: list[str] = []
+
+        if pnl_pct <= _TRACKING_THRESHOLDS["pnl_pct_critical"]:
+            status = "🔴"
+            reasons.append(
+                f"pérdida {pnl_pct * 100:.1f}% > umbral crítico "
+                f"{_TRACKING_THRESHOLDS['pnl_pct_critical'] * 100:.0f}%"
+            )
+        elif pnl_pct <= _TRACKING_THRESHOLDS["pnl_pct_warning"]:
+            status = "🟡"
+            reasons.append(
+                f"pérdida {pnl_pct * 100:.1f}% entre "
+                f"{_TRACKING_THRESHOLDS['pnl_pct_warning'] * 100:.0f}% y "
+                f"{_TRACKING_THRESHOLDS['pnl_pct_critical'] * 100:.0f}%"
+            )
+
+        if abs(weight_dev_pp) >= _TRACKING_THRESHOLDS["weight_dev_critical_pp"]:
+            status = "🔴"  # mayor severidad, sobrescribe
+            reasons.append(
+                f"desviación de peso {weight_dev_pp:+.1f} p.p. > "
+                f"{_TRACKING_THRESHOLDS['weight_dev_critical_pp']:.0f} p.p."
+            )
+        elif abs(weight_dev_pp) >= _TRACKING_THRESHOLDS["weight_dev_warning_pp"]:
+            if status == "🟢":
+                status = "🟡"
+            reasons.append(
+                f"desviación de peso {weight_dev_pp:+.1f} p.p. entre "
+                f"{_TRACKING_THRESHOLDS['weight_dev_warning_pp']:.0f} y "
+                f"{_TRACKING_THRESHOLDS['weight_dev_critical_pp']:.0f} p.p."
+            )
+
+        row = {
+            "ticker": tkr,
+            "venue": cp["venue"] or venue_baseline,
+            "weight_current_pct": round(weight_current_pct, 2),
+            "weight_target_pct": round(weight_target_pct, 2),
+            "weight_deviation_pp": round(weight_dev_pp, 2),
+            "entry_price": round(entry_price, 6) if entry_price else None,
+            "current_price": round(current_price, 6) if current_price else None,
+            "quantity": quantity,
+            "current_value_usd": round(current_value, 2),
+            "pnl_abs_usd": round(pnl_abs, 2),
+            "pnl_pct": round(pnl_pct, 4),
+            "pnl_abs_source": pnl_abs_source,  # "platform" o "computed"
+            "leverage": leverage,
+            "status": status,
+            "status_reasons": reasons,
+        }
+        positions_report.append(row)
+
+        # Cada posición no-🟢 genera una alerta consolidada
+        if status != "🟢":
+            alerts.append({
+                "severity": status,
+                "ticker": tkr,
+                "reasons": reasons,
+                "pnl_pct": round(pnl_pct, 4),
+                "weight_deviation_pp": round(weight_dev_pp, 2),
+            })
+
+    # ─────────────────────────────────────────────────────────
+    # 4. Nuevas y cerradas
+    # ─────────────────────────────────────────────────────────
+    baseline_tickers = set(baseline_by_ticker.keys())
+    current_tickers = set(current_by_ticker.keys())
+
+    new_positions = []
+    for tkr in sorted(current_tickers - baseline_tickers):
+        cp = current_by_ticker[tkr]
+        weight_pct = (
+            (cp["current_value_usd"] / total_value_current) * 100.0
+            if total_value_current > 0 else 0.0
+        )
+        new_positions.append({
+            "ticker": tkr,
+            "venue": cp["venue"],
+            "current_value_usd": round(cp["current_value_usd"], 2),
+            "weight_current_pct": round(weight_pct, 2),
+            "note": "fuera de plan: no estaba en el baseline original",
+        })
+        alerts.append({
+            "severity": "🟡",
+            "ticker": tkr,
+            "reasons": ["posición nueva no prevista en el baseline"],
+            "pnl_pct": None,
+            "weight_deviation_pp": None,
+        })
+
+    closed_positions = []
+    for tkr in sorted(baseline_tickers - current_tickers):
+        bp = baseline_by_ticker[tkr]
+        closed_positions.append({
+            "ticker": tkr,
+            "venue": bp.get("venue"),
+            "weight_target_pct": float(bp.get("weight_target_pct") or 0.0),
+            "capital_assigned_usd": float(bp.get("capital_assigned_usd") or 0.0),
+            "entry_price": float(bp.get("entry_price") or 0.0),
+            "note": (
+                "estaba en el baseline pero no en posiciones actuales: "
+                "preguntar al usuario motivo (SL, TP, cierre manual) y "
+                "P&L realizado. La tool no puede saberlo."
+            ),
+        })
+        alerts.append({
+            "severity": "🟡",
+            "ticker": tkr,
+            "reasons": [
+                "posición del baseline ya no está abierta: requiere "
+                "confirmación de motivo y P&L realizado con el usuario"
+            ],
+            "pnl_pct": None,
+            "weight_deviation_pp": None,
+        })
+
+    # ─────────────────────────────────────────────────────────
+    # 5. Resumen de portafolio
+    # ─────────────────────────────────────────────────────────
+    # P&L total absoluto: suma de los P&L absolutos de posiciones
+    # matcheadas (las "nuevas" no tienen entry_price en el baseline,
+    # así que su P&L real no es calculable sin data adicional).
+    pnl_total_abs = sum(r["pnl_abs_usd"] for r in positions_report)
+
+    if capital_initial > 0:
+        pnl_total_pct = pnl_total_abs / capital_initial
+    else:
+        pnl_total_pct = 0.0
+
+    # Ordenar alertas: 🔴 primero, 🟡 después
+    severity_order = {"🔴": 0, "🟡": 1, "🟢": 2}
+    alerts.sort(key=lambda a: severity_order.get(a["severity"], 9))
+
+    counts = {
+        "red": sum(1 for a in alerts if a["severity"] == "🔴"),
+        "yellow": sum(1 for a in alerts if a["severity"] == "🟡"),
+        "green": sum(1 for r in positions_report if r["status"] == "🟢"),
+    }
+
+    summary = {
+        "capital_initial_usd": round(capital_initial, 2),
+        "total_value_current_usd": round(total_value_current, 2),
+        "pnl_total_abs_usd": round(pnl_total_abs, 2),
+        "pnl_total_pct": round(pnl_total_pct, 4),
+        "positions_in_baseline": len(baseline_by_ticker),
+        "positions_current": len(current_by_ticker),
+        "positions_matched": len(positions_report),
+        "positions_new": len(new_positions),
+        "positions_closed": len(closed_positions),
+        "alert_counts": counts,
+    }
+
+    return {
+        "summary": summary,
+        "positions": positions_report,
+        "new_positions": new_positions,
+        "closed_positions": closed_positions,
+        "alerts": alerts,
+        "thresholds_used": _TRACKING_THRESHOLDS,
         "warnings": warnings,
     }
 
