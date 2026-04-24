@@ -44,18 +44,30 @@ SI viola → reemplazar por alternativas flexibles.
 
 ### R5: Correlación
 ```
-EJECUTAR calculate_correlation entre los activos principales del plan.
+PARA cada par (i, j) de activos del plan con i < j:
+  → Obtener 30 días de precios de cierre reales desde Alpha Vantage
+    para ambos activos.
+  → Ejecutar calculate_correlation(prices_a, prices_b).
 
-SI correlación > 0.7:
-  → ADVERTIR (no bloquear automáticamente para riesgo alto)
-  → Para riesgo bajo/moderado: reemplazar uno por activo descorrelacionado
-  → Para riesgo alto/extremo: advertir pero permitir si el usuario lo acepta
+Umbrales (sobre el valor devuelto por la tool, no sobre supuestos):
+  SI correlación > 0.7:
+    → Riesgo BAJO / MODERADO: reemplazar uno de los dos por un activo
+      descorrelacionado y recalcular.
+    → Riesgo ALTO / EXTREMO: advertir, permitir si el usuario lo acepta
+      explícitamente.
+  SI 0.3 < correlación ≤ 0.7:
+    → Aceptable. Reportar el valor en la presentación del plan.
+  SI correlación ≤ 0.3:
+    → Buena diversificación. Reportar el valor.
 
-Pares conocidos de alta correlación:
-  VOO + QQQ (~0.85) → problema para cualquier perfil
-  COIN + BTC/ETH (~0.80) → aceptable si es la tesis del plan
-  NVDA + AMD (~0.70) → advertir
-  ETH + SOL (~0.65) → aceptable
+Datos faltantes:
+  Si no se obtienen 30 días de precios para algún activo (ticker no
+  cubierto, símbolo nuevo, error de la API), NO inventar correlaciones
+  ni usar estimaciones del modelo. Marcar el par como "correlación no
+  disponible" en la presentación y dejar la decisión al usuario.
+
+Prohibido: usar correlaciones precalculadas o pares "conocidos" que no
+provengan de calculate_correlation sobre datos reales del periodo.
 ```
 
 ### R6: Risk score del portafolio (ajustado por correlación)
