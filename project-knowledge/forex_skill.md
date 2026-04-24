@@ -54,28 +54,111 @@ SI experience_level = "none":
 SI experience_level = "beginner":
   → SOLO con cuenta demo obligatoria (1 mes mínimo)
   → Capital real máximo: $100 o 10% del capital total (lo menor)
-  → Solo pares principales (EUR/USD, GBP/USD)
+  → Universo restringido: solo pares donde ambas patas ∈ {USD, EUR, GBP, JPY}
+    (descubrimiento dinámico aplica SOLO sobre este subconjunto)
   → Apalancamiento máximo: 2x
+  → Excluir XAU/USD y commodity currencies (AUD, NZD, CAD, NOK, SEK)
 
 SI experience_level = "intermediate" o "advanced":
   → Incluir con capital real
   → Apalancamiento máximo: 5x
-  → Todos los pares principales + XAU/USD
+  → Universo completo disponible para descubrimiento dinámico
+    (majors + crosses + commodity currencies + XAU/USD como CFD)
 ```
 
-### Selección de pares autónoma
+### Descubrimiento dinámico de pares
+
+**Principio:** no hay ranking fijo de pares. El universo se escanea cada
+iteración y la selección la determina la **tendencia** y el **ATR relativo**,
+no una tabla preestablecida.
+
+#### Universo de escaneo (monedas, no pares)
 ```
-→ Consultar Alpha Vantage: CURRENCY_EXCHANGE_RATE para pares principales
-→ Consultar FX_DAILY últimos 30 días para tendencia
+MAJORS:              USD, EUR, GBP, JPY, CHF
+COMMODITY CURRENCIES: AUD, NZD, CAD, NOK, SEK
+(opcional si intermediate+): XAU (oro como CFD commodity)
+```
 
-SI hay tendencia clara en D1 (precio arriba/abajo de media 50 consistentemente):
-  → Recomendar ese par para swing en dirección de tendencia
-  → Explicar: "El [par] tiene tendencia [alcista/bajista] las últimas semanas"
+De este universo se construyen pares contra **USD** (majors vs USD) y los
+**crosses** más líquidos (EUR/GBP, EUR/JPY, EUR/CHF, GBP/JPY, AUD/JPY,
+EUR/AUD, AUD/NZD, EUR/NOK, EUR/SEK, USD/NOK, USD/SEK). Evitar exóticos.
 
-SI no hay tendencia clara en ningún par:
-  → NO recomendar forex activo en esta iteración
-  → "Los mercados de divisas están sin dirección clara. Mejor esperar."
-  → Esto es comportamiento inteligente: saber cuándo NO actuar
+El filtro de barrera de entrada (ver § anterior) puede **restringir** este
+universo (p.ej. beginner → solo pares que incluyan USD y donde una pata
+sea EUR/GBP/JPY), pero nunca lo sustituye por una lista fija.
+
+#### Protocolo de escaneo
+```
+PARA CADA par candidato del universo (filtrado por experience_level):
+
+  1. alphavantage.TOOL_CALL(
+        name="CURRENCY_EXCHANGE_RATE",
+        from_currency="<BASE>",
+        to_currency="<QUOTE>"
+     )
+     → obtener precio spot y validar que el par cotiza.
+
+  2. alphavantage.TOOL_CALL(
+        name="FX_DAILY",
+        from_symbol="<BASE>",
+        to_symbol="<QUOTE>",
+        outputsize="compact"   # últimos ~100 días D1
+     )
+     → calcular sobre la serie:
+       - SMA50 y SMA20
+       - % de las últimas 20 velas cerradas arriba (o abajo) de SMA50
+       - ATR(14) en valor absoluto
+       - ATR% = ATR(14) / precio_spot   ← normalización para comparar pares
+
+  3. Clasificar el par:
+
+     TENDENCIA CLARA:
+       ≥ 70% de las últimas 20 velas D1 del mismo lado de SMA50
+       Y SMA20 en la misma dirección que SMA50
+       → candidato válido; registrar dirección (long/short).
+
+     TENDENCIA AMBIGUA:
+       entre 45% y 70% del mismo lado
+       → descartar esta iteración (no operar lo dudoso).
+
+     RANGO / SIN DIRECCIÓN:
+       < 45% (oscila alrededor de SMA50)
+       → descartar para swing direccional.
+
+  4. ATR RELATIVO (ranking entre candidatos válidos):
+     ordenar los pares que pasaron (3) por ATR%:
+       - ATR% muy bajo (< 0.3%) → movimiento insuficiente, descartar
+         (el stop técnico queda tan apretado que el R:R no compensa el
+         spread + comisión).
+       - ATR% normal (0.3% – 1.2%) → preferidos.
+       - ATR% alto (> 1.2%) → aceptable SOLO si experience_level ≥
+         intermediate y se reduce el tamaño de posición proporcionalmente
+         vía calculate_position_size.
+```
+
+#### Selección final
+```
+SI ≥ 1 par pasa los filtros 3 y 4:
+  → elegir hasta 2 pares (máximo 3 trades simultáneos, ver "Reglas duras").
+  → preferir diversificación de divisa base/cotización
+    (no abrir 3 trades todos con USD del mismo lado = misma apuesta).
+  → pasar los candidatos a technical_skill para derivar entry/SL/TP.
+
+SI ningún par pasa:
+  → NO recomendar forex activo en esta iteración.
+  → Explicar: "Escaneé el universo forex (majors + crosses + commodity
+    currencies) y ninguno tiene tendencia clara con ATR operable.
+    Mejor esperar a la próxima revisión."
+  → Esto es comportamiento inteligente: saber cuándo NO actuar.
+```
+
+#### Explicación al usuario (patrón)
+```
+"Del universo escaneado (USD, EUR, GBP, JPY, CHF, AUD, NZD, CAD, NOK,
+SEK), los pares con tendencia D1 sostenida y ATR relativo operable esta
+semana son: <par A> (<dirección>, ATR% <x.xx>%) y <par B>
+(<dirección>, ATR% <x.xx>%). El resto está en rango o con volatilidad
+insuficiente para el R:R objetivo."
 ```
 
 ### Dimensionamiento automático
@@ -110,13 +193,33 @@ SI quiere MetaTrader → Pepperstone o XTB
 | eToro | PayPal, tarjeta | ~1.0 pips | Sí, $100K | CySEC/FCA/ASIC |
 | Pepperstone | Transferencia | ~0.1 pips raw | Sí | ASIC/FCA/BaFIN |
 
-## Pares recomendados
-| Par | Spread | Volatilidad | Sesión óptima | Nota |
-|-----|--------|------------|---------------|------|
-| EUR/USD | 0.6-1.0 | Baja-media | Londres/NY 8am-12pm ET | Más líquido |
-| GBP/USD | 1.0-1.5 | Media | Londres 3am-12pm ET | Más volátil |
-| USD/JPY | 0.7-1.2 | Baja-media | Tokio/Londres | Buenos movimientos tendenciales |
-| XAU/USD | 2-4 | Media-alta | NY 8am-5pm ET | Cobertura, movimientos fuertes |
+## Referencia secundaria: sesiones y spreads típicos
+
+> ⚠️ **Esta tabla NO es un ranking de selección.** La selección del par
+> la hace la sección "Descubrimiento dinámico de pares" (tendencia + ATR
+> relativo). Esta tabla solo ayuda a elegir **horario de ejecución** y a
+> tener una referencia de spread/volatilidad esperada una vez que el
+> escaneo dinámico ya eligió el par.
+
+| Par      | Spread típ. | Volatilidad | Sesión óptima             | Nota                              |
+|----------|-------------|-------------|---------------------------|-----------------------------------|
+| EUR/USD  | 0.6–1.0     | Baja-media  | Londres/NY 8am-12pm ET    | Más líquido                       |
+| GBP/USD  | 1.0–1.5     | Media       | Londres 3am-12pm ET       | Más volátil                       |
+| USD/JPY  | 0.7–1.2     | Baja-media  | Tokio/Londres             | Buenos movimientos tendenciales   |
+| USD/CHF  | 1.0–1.5     | Baja        | Londres/NY                | Sensible a risk-off               |
+| AUD/USD  | 0.8–1.3     | Media       | Sídney/Tokio + Londres    | Ligada a commodities y China      |
+| NZD/USD  | 1.2–1.8     | Media       | Sídney/Tokio              | Menos líquido que AUD             |
+| USD/CAD  | 1.0–1.5     | Media       | NY                        | Correlación inversa con crudo     |
+| USD/NOK  | 8–20        | Media-alta  | Londres                   | Commodity currency, spread alto   |
+| USD/SEK  | 8–20        | Media       | Londres                   | Commodity currency, spread alto   |
+| EUR/JPY  | 1.0–1.6     | Media       | Londres/Tokio             | Cross clásico risk-on/risk-off    |
+| GBP/JPY  | 1.8–3.0     | Alta        | Londres                   | "The Beast" – mover el stop       |
+| EUR/GBP  | 1.0–1.8     | Baja        | Londres                   | Rango frecuente, ATR% bajo        |
+| XAU/USD  | 2–4         | Media-alta  | NY 8am-5pm ET             | CFD commodity, no es par FX puro  |
+
+Si un par aparece **seleccionado por el descubrimiento dinámico** pero
+su spread típico aquí listado es > 3 veces el ATR% esperado del trade
+→ revisar manualmente si el setup sigue teniendo sentido con los costos.
 
 ## Cálculos obligatorios
 0. Si se opera en eToro → **Gate eToro** (arriba) antes de seguir
@@ -144,8 +247,8 @@ SI principiante:
 
 SI intermedio+:
   Día 1: abrir cuenta
-  Día 2: depositar + primer análisis de pares
-  Día 3+: ejecutar setups cuando condiciones se cumplan
+  Día 2: depositar + ejecutar descubrimiento dinámico sobre universo completo
+  Día 3+: ejecutar setups cuando condiciones se cumplan (re-escanear al menos 1 vez por semana)
 ```
 
 ## Explicación adaptativa
