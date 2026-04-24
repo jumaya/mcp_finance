@@ -1,5 +1,18 @@
-# Skill: Acciones y ETFs — v9.0
+# Skill: Acciones y ETFs — v9.1
 
+> **Changelog v9.1:** eliminada por completo la tabla de volatilidad/drawdown
+> por categoría (que en v8.1 funcionaba como fallback documentado). La tabla,
+> aunque genérica, seguía sembrando un universo de "anclas" que el agente
+> podía usar como muleta narrativa ("NOW ~ Growth large-cap SaaS, vol≈0.30").
+> El nuevo protocolo es estricto:
+>   1. **Primaria:** cálculo en vivo desde Alpha Vantage (`TIME_SERIES_DAILY`).
+>   2. **Fallback único:** `yfinance_get_ticker_info` (campos `beta`,
+>      `fiftyDayAverage`, `twoHundredDayAverage`, `52WeekChange`) → derivar
+>      `volatility_30d` y `max_drawdown_12m` por fórmula, no por tabla.
+>   3. **Si ambas fallan → descartar el ticker para esta sesión.** No hay
+>      tercera fuente, no hay categoría "conservadora por defecto".
+> Ver § "Volatilidad y max drawdown: fuente primaria vs. fallback".
+>
 > **Changelog v9.0:** eliminado el universo cerrado de tickers (listas fijas
 > por riesgo tipo `ALTO: NVDA, TSLA, AMD…`). Los candidatos ahora se
 > **descubren dinámicamente** vía `tradingview.screen_stocks` con filtros
@@ -15,6 +28,7 @@
 > para `volatility_30d` y ~252 días para `max_drawdown_12m`). La tabla
 > solo se usa cuando la tool falla, con motivo logueado al usuario.
 > Ver § "Volatilidad y max drawdown: fuente primaria vs. fallback".
+> *(Superado por v9.1: la tabla fue eliminada por completo.)*
 
 ## Descubrimiento dinámico de candidatos (OBLIGATORIO antes de cualquier análisis)
 
@@ -174,12 +188,21 @@ PROHIBIDO para perfil ALTO: ETFs amplios sin apalancamiento (VOO, VT,
 
 ## Volatilidad y max drawdown: fuente primaria vs. fallback
 
-**Regla dura (v8.1):** el valor de `volatility_30d` y `max_drawdown_12m`
-que se pasa a `calculate_risk_score` SIEMPRE se prefiere calculado en
-vivo desde Alpha Vantage sobre los últimos 30 días (vol) y últimos
-12 meses (drawdown). El fallback por categoría (sección de abajo) es
-**solo fallback documentado** cuando la tool falla, devuelve rate-limit,
-o no tiene data suficiente para el ticker.
+**Regla dura (v9.1):** el valor de `volatility_30d` y `max_drawdown_12m`
+que se pasa a `calculate_risk_score` se obtiene en este orden ESTRICTO:
+
+  1. **Primaria — Alpha Vantage en vivo** (`TIME_SERIES_DAILY` → cálculo).
+  2. **Fallback único — `yfinance_get_ticker_info`** (campos `beta`,
+     `fiftyDayAverage`, `twoHundredDayAverage`, `52WeekChange`) → derivar
+     ambos números por fórmula, no por tabla de categorías.
+  3. **Si ambas fuentes fallan → DESCARTAR el ticker para esta sesión.**
+     No existe una tercera fuente, ni una "categoría conservadora por
+     defecto", ni un valor inventado "aproximado".
+
+No hay tabla de tickers/categorías con valores hardcoded. La tabla previa
+(v8.1) fue eliminada en v9.1 porque seguía actuando como ancla narrativa
+("vol≈0.30 porque suena a SaaS") incluso cuando había datos reales
+disponibles.
 
 ### Protocolo de cálculo (fuente primaria — Alpha Vantage)
 
@@ -214,71 +237,95 @@ POR CADA ticker, antes de llamar calculate_risk_score:
      "volatility_30d=0.XX (calculada en vivo desde Alpha Vantage,
       30d hasta <fecha>)"
 
-Criterios para caer a fallback:
-  - La tool devuelve error, rate-limit (nota "call frequency"),
-    o payload vacío.
+Criterios para caer al fallback de yfinance:
+  - La tool de Alpha Vantage devuelve error, rate-limit (nota
+    "call frequency"), o payload vacío.
   - Hay < 20 cierres diarios disponibles (ticker nuevo o suspendido).
   - El número calculado sale fuera de [0.03, 1.50] para vol anual
     (claro síntoma de data corrupta).
 ```
 
-### Fallback por perfil/sector (usar SOLO si falla el cálculo en vivo)
+### Fallback único: `yfinance_get_ticker_info` (usar SOLO si Alpha Vantage falló)
 
 ```
-⚠️ Estos rangos son **genéricos por categoría**, no listas de tickers
-hardcoded. Se usan únicamente cuando Alpha Vantage falla y TradingView
-tampoco tiene `Volatility.M` disponible para el ticker descubierto por
-el screener. Los rangos son anclas conservadoras, no valores exactos.
+POR CADA ticker que cayó al fallback:
 
-| Categoría del activo                      | volatility_30d | max_drawdown_12m |
-|-------------------------------------------|---------------|------------------|
-| ETF amplio mercado (S&P 500, MSCI World)  | 0.10          | -0.15            |
-| ETF sectorial large-cap (QQQ, XLK, XLF)   | 0.15          | -0.22            |
-| Blue-chip large-cap estable (mega-cap)    | 0.15          | -0.22            |
-| Blue-chip large-cap con beta>1            | 0.20          | -0.28            |
-| Growth large-cap (SaaS, consumer tech)    | 0.30          | -0.40            |
-| Growth mid-cap / semiconductores          | 0.35          | -0.45            |
-| High-beta / fintech / discretionary alto  | 0.40          | -0.50            |
-| Proxy cripto (mineros, exchanges, BTC-related) | 0.55     | -0.65            |
-| ETF apalancado 2x-3x                      | 0.60          | -0.70            |
+  1. Llamar (si no se llamó ya en el paso 2 del protocolo general):
+       yfinance.yfinance_get_ticker_info(symbol="<TICKER>")
 
-Cómo clasificar un ticker en una categoría (sin lista fija):
-  1. Obtener del screener (o de `yfinance_get_ticker_info`):
-       sector, market_cap_basic, beta_1_year, Volatility.M (si la hay).
-  2. Mapear con reglas simples:
-       - market_cap > $200B y beta < 1.1 → "Blue-chip estable".
-       - market_cap > $50B y beta in [1.1, 1.5] → "Blue-chip con beta>1".
-       - sector "Electronic Technology" y market_cap 10-100B → "Growth
-         mid-cap / semis".
-       - industry "Information Technology Services" o "Packaged Software"
-         y market_cap > 10B → "Growth large-cap SaaS".
-       - Nombre del instrumento contiene "2X"/"3X"/"Ultra"/"Bull" → ETF
-         apalancado.
-       - Ticker aparece en industry "Investment Trusts/Mutual Funds" o
-         "Finance/Rental/Leasing" con "Bitcoin"/"Crypto" en el nombre
-         → "Proxy cripto".
-  3. Si no encaja claro en ninguna, usar la categoría inmediatamente más
-     conservadora (mayor vol) para no subestimar el riesgo.
+  2. Derivar volatility_30d desde el payload:
+     Estrategia preferida — proxy por `beta` y `52WeekChange`:
+       → Si el payload trae `beta` (beta de 5 años vs. S&P 500):
+           σ_market_anual = 0.18   (vol anualizada del S&P en régimen
+                                    normal; si la sesión tiene clara
+                                    señal de régimen alto en VIX, usar
+                                    0.25 — DOCUMENTAR la elección).
+           volatility_30d ≈ |beta| × σ_market_anual
+       → Si el payload NO trae `beta` pero trae `fiftyDayAverage` y
+         `currentPrice`, usar como proxy CONSERVADOR (no preferido):
+           volatility_30d ≈ máx(0.20,
+                                |currentPrice - fiftyDayAverage| /
+                                fiftyDayAverage × sqrt(12))
+         (este proxy infraestima si la acción ha sido lateral durante
+          50 días — por eso el piso de 0.20).
 
-Cuándo usar este fallback:
-  1. Alpha Vantage falló Y TradingView no devolvió `Volatility.M` válido
-     para el ticker:
-       → clasificar el ticker en una categoría (pasos 1-3 de arriba)
-       → usar el valor de la categoría Y loguear explícitamente:
-         "volatility_30d=0.XX (FALLBACK categoría '<Growth large-cap SaaS>',
-          Alpha Vantage y Volatility.M no disponibles: <motivo>)"
-  2. Alpha Vantage falló PERO TradingView sí devolvió `Volatility.M`:
-       → usar `Volatility.M/100 × sqrt(12)` como aproximación de
-         `volatility_30d` anualizada y loguear:
-         "volatility_30d=0.XX (FALLBACK derivado de Volatility.M de
-          TradingView, Alpha Vantage no disponible)"
-  3. Si ninguna fuente responde → NO inventar: informar al usuario
-     "no es posible calcular risk score confiable para <TICKER>
-      ahora mismo" y descartar el ticker para esta sesión.
+  3. Derivar max_drawdown_12m desde el payload:
+     → Si el payload trae `52WeekChange`:
+         max_drawdown_12m ≈ mín(52WeekChange, -0.10)
+       (es un proxy: el 52WeekChange es el retorno punta a punta,
+        no el drawdown intra-período. El piso de -0.10 reconoce que
+        incluso una acción que termina plana en 12 meses casi seguro
+        tuvo un drawdown intra-período ≥ 10%. Si 52WeekChange es
+        positivo, el drawdown real es desconocido — usar -0.15 como
+        cota inferior conservadora.)
+     → Si el payload trae `twoHundredDayAverage` y `currentPrice`
+       y NO trae `52WeekChange`:
+         dd_proxy = mín(0, (currentPrice - twoHundredDayAverage) /
+                            twoHundredDayAverage)
+         max_drawdown_12m ≈ mín(dd_proxy, -0.15)
 
-El fallback NUNCA se usa si la tool devolvió un número válido. El número
-real del mercado manda.
+  4. Loguear EXPLÍCITAMENTE al usuario en la sección de datos:
+     "volatility_30d=0.XX (FALLBACK yfinance: derivado de beta=Y.YY ×
+      σ_market 0.18; Alpha Vantage no disponible: <motivo>)"
+     "max_drawdown_12m=-0.XX (FALLBACK yfinance: derivado de
+      52WeekChange=-0.YY)"
+
+  5. Aplicar bandas de cordura: si volatility_30d derivada cae fuera
+     de [0.05, 1.20] o max_drawdown_12m fuera de [-0.85, 0], el proxy
+     está mal calibrado para este ticker → tratar como "fallback falló"
+     y pasar al paso de descarte.
 ```
+
+### Si ambas fuentes fallan → descartar el ticker
+
+```
+Cuando NI Alpha Vantage NI yfinance_get_ticker_info devuelven datos
+suficientes para derivar volatility_30d y max_drawdown_12m dentro de
+las bandas de cordura:
+
+  → NO inventar números.
+  → NO usar TradingView `Volatility.M` como tercera fuente
+    (en v9.1 se cerró esa puerta: el screener ya entregó el ticker;
+     no se vuelve a ese pozo para datos de riesgo).
+  → NO clasificar por "categoría" (no hay tabla a la que recurrir).
+
+Acción única:
+  → Informar al usuario:
+    "No es posible calcular risk score confiable para <TICKER> en
+     esta sesión (Alpha Vantage: <motivo>; yfinance: <motivo>).
+     Descartado para esta recomendación."
+  → Tomar el siguiente candidato del universo del screener
+    (paso 0' del protocolo general) y reiniciar desde el paso 0
+    (gate eToro).
+  → Si tras agotar el universo del screener no quedan ≥ 3 candidatos
+    operables con datos de riesgo válidos, informar al usuario y
+    proponer relajar UN filtro del perfil antes de seguir.
+```
+
+El fallback de yfinance NUNCA se usa si Alpha Vantage devolvió un
+número válido. El número real del mercado manda. Y el descarte NUNCA
+se sustituye por una "estimación a ojo" — la opción a la derecha del
+fallback es siempre "no recomendar este ticker", nunca "inventar".
 
 ## Cómo llamar calculate_risk_score (ejemplo)
 ```
@@ -296,11 +343,13 @@ Para NOW con CFD 2x, peso 35% (cálculo en vivo, caso normal):
   Resultado esperado: ~7.5-8.5 "high" (leverage floor del server.py)
 
 Para NOW con CFD 2x (modo fallback, si Alpha Vantage cayó):
-  # Clasificación: sector=Technology Services, market_cap ~$170B, beta~1.1
-  #   → categoría "Growth large-cap SaaS" → vol≈0.30, dd≈-0.40
+  # Paso previo: yfinance_get_ticker_info("NOW") devolvió beta=1.32,
+  #   52WeekChange=-0.15
+  # Derivación: volatility_30d ≈ 1.32 × 0.18 = 0.24
+  #             max_drawdown_12m ≈ mín(-0.15, -0.10) = -0.15
   calculate_risk_score(
-    volatility_30d=0.30,      ← FALLBACK categoría "Growth large-cap SaaS" (loguear)
-    max_drawdown_12m=-0.40,   ← FALLBACK misma categoría (loguear)
+    volatility_30d=0.24,      ← FALLBACK yfinance: beta=1.32 × σ_market 0.18 (loguear)
+    max_drawdown_12m=-0.15,   ← FALLBACK yfinance: 52WeekChange=-0.15 (loguear)
     liquidity="instant",
     platform_regulated=true,
     weight_in_portfolio_pct=35,
@@ -311,7 +360,9 @@ Para un ETF S&P 500 spot, peso 20% (ej. ticker descubierto por screener
 con filtros de perfil BAJO):
   calculate_risk_score(
     volatility_30d=0.12,      ← calculada en vivo si AV responde,
-    max_drawdown_12m=-0.20,   ←  si no, fallback categoría "ETF amplio mercado"
+    max_drawdown_12m=-0.20,   ←  si no, fallback yfinance (beta×σ_market
+                                  y 52WeekChange); si yfinance tampoco
+                                  → DESCARTAR ticker, no inventar.
     liquidity="instant",
     platform_regulated=true,
     weight_in_portfolio_pct=20,
@@ -458,8 +509,10 @@ Orden recomendado en una sesión típica:
 No ocultes la restricción — es información útil:
 
 > "CRM no está disponible en tu cuenta eToro desde Colombia (o no es
-> operable en este momento). Lo reemplacé por NOW, que tiene perfil
-> similar (SaaS enterprise, volatilidad ~0.30). NOW sí pasó el gate."
+> operable en este momento). Lo reemplacé por NOW, que sale del mismo
+> universo del screener (perfil de riesgo y sector compatibles). NOW sí
+> pasó el gate; la volatilidad real se calcula en vivo desde Alpha Vantage
+> en el siguiente paso."
 
 ## Extracción de datos de `yfinance_get_ticker_info` (obligatorio)
 
@@ -590,9 +643,15 @@ POR CADA acción candidata de la lista anterior (en este ORDEN):
        serie diaria (ver § "Volatilidad y max drawdown: fuente primaria
        vs. fallback" arriba para la fórmula exacta).
      → Si la tool falla / rate-limit / data insuficiente:
-         usar el fallback por categoría (ver § "Fallback por perfil/sector")
-         clasificando el ticker según sector + market_cap + beta. LOGUEAR
-         explícitamente el motivo en la sección de datos del plan.
+         caer al fallback ÚNICO: derivar volatility_30d y
+         max_drawdown_12m desde `yfinance_get_ticker_info` (campos
+         `beta`, `52WeekChange`, `fiftyDayAverage`, `twoHundredDayAverage`)
+         siguiendo las fórmulas del § "Fallback único: yfinance_get_ticker_info".
+         LOGUEAR explícitamente al usuario qué fuente y qué fórmula se usó.
+     → Si TAMBIÉN yfinance falla o el proxy cae fuera de bandas de
+       cordura → DESCARTAR el ticker para esta sesión y pasar al
+       siguiente del universo del screener. NO inventar números, NO
+       usar TradingView Volatility.M como tercera fuente.
      → Guardar vol_calculada y dd_calculado para pasos 4 y 5.
   2. Yahoo Finance → yfinance_get_ticker_info(symbol="<TICKER>")
      → extraer TODOS los campos obligatorios de la sección
@@ -612,8 +671,10 @@ POR CADA acción candidata de la lista anterior (en este ORDEN):
      → Los SL/TP técnicos SUSTITUYEN a cualquier SL/TP "redondo"
        (ej. -10%) que se hubiera considerado.
   4. calculate_risk_score(vol_calculada, dd_calculado, "instant", true, peso, leverage)
-     → vol y dd vienen del paso 1 (preferente: cálculo en vivo;
-       fallback: categoría, con motivo logueado).
+     → vol y dd vienen del paso 1 (preferente: cálculo en vivo desde
+       Alpha Vantage; fallback único: derivación desde yfinance_get_ticker_info,
+       con motivo logueado; si ambas fallan: ticker descartado, no se
+       llega a este paso).
   5. calculate_scenarios(
         monto, apy, vol_calculada, passive_bruto, meses, leverage, monthly_cost,
         dividend_withholding_pct=0.30 si US y paga dividendo (else 0.0)
@@ -644,12 +705,13 @@ Volver a leer el payload.
 y `calculate_scenarios` como `volatility_30d` debe ser trazable a una
 de estas dos fuentes (en este orden de preferencia):
   1. Cálculo en vivo sobre TIME_SERIES_DAILY de Alpha Vantage (preferido).
-  2. Fallback por categoría documentado en este skill (solo si 1 falló,
-     con el motivo logueado al usuario; la categoría se deriva de
-     sector + market_cap + beta del ticker, NO de una tabla fija
-     por nombre).
-Si no se puede garantizar ninguna de las dos, descartar el ticker;
-no inventar un número "aproximado".
+  2. Derivación por fórmula desde `yfinance_get_ticker_info`
+     (`beta` × σ_market y/o `52WeekChange`), con motivo logueado al
+     usuario, SOLO si Alpha Vantage falló.
+Si ninguna de las dos responde con datos dentro de bandas de cordura,
+DESCARTAR el ticker; no inventar un número "aproximado", no recurrir a
+una categoría hardcoded (esa puerta se cerró en v9.1), no usar
+TradingView Volatility.M como tercera fuente.
 
 **Invariante universo:** ningún ticker llega al usuario sin haber pasado
 por el paso 0' (descubrimiento) o haber sido pedido explícitamente por
