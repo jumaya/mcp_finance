@@ -5,10 +5,17 @@ Instrucciones para el agente cuando el usuario expresa interés en
 
 ## Regla fundamental
 
-**NUNCA recomendar traders por nombre sin validar sus métricas con datos
-reales de la API.** Nombres como @JeppeKirkBonde o @jaynemesis son
-referencias iniciales útiles, pero toda sugerencia final debe apoyarse
-en los datos que devuelven las tools del MCP `etoro-server`.
+**NUNCA recomendar traders por nombre desde el conocimiento previo del
+agente.** Toda lista de candidatos debe nacer de una llamada a
+`discover_popular_investors` y todo finalista debe validarse con
+`get_user_performance`. Los nombres concretos solo aparecen en la
+respuesta al usuario cuando provienen del response de esas tools y han
+pasado el rerankeo por métricas objetivas descrito en los Pasos 4 y 5.
+
+No se mencionan traders "famosos", "conocidos" o "típicos" como punto
+de partida — eso introduce sesgo de popularidad ajeno al perfil del
+usuario y contamina el ranking antes de que existan datos. El descubrimiento
+es siempre data-first: API → filtros → rerankeo → presentación.
 
 ## Cuándo activar este skill
 
@@ -231,8 +238,10 @@ recuerda:
   copy trading'}` al orquestador y se espera que redistribuya el capital.
 - ❌ Sugerir traders sin haber llamado `get_user_performance` para ver
   sus métricas reales.
-- ❌ Usar nombres hardcodeados como referencias definitivas. Son solo
-  punto de partida para que el usuario sepa de qué estamos hablando.
+- ❌ Usar nombres hardcodeados como punto de partida o referencia.
+  El descubrimiento siempre arranca con `discover_popular_investors`
+  filtrado por el perfil del usuario; el agente no precarga nombres
+  desde su conocimiento previo.
 - ❌ Basar la recomendación solo en `gain` anual. Alto retorno con alto
   drawdown es peor que retorno moderado estable.
 - ❌ Pasar todos los filtros de `discover_popular_investors` juntos —
