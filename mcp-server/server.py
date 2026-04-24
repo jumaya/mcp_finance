@@ -30,6 +30,25 @@ v7 — Fix 6: calculate_portfolio_risk_score — ajuste por correlación.
      (portafolio menos diversificado de lo que parece), si < 0.3 →
      -0.5 (diversificación real reduce riesgo agregado). Regla
      simple y defendible; documentada en risk_rules.md R6.
+v8 — Fix 7: allocate_portfolio dinámico.
+     Antes había 4 plantillas Python literales; dos usuarios con el
+     mismo risk_tolerance y capital obtenían EXACTAMENTE el mismo
+     split, sin importar el contexto de mercado, el horizonte numérico,
+     la edad, ni las preferencias. Esto violaba el principio #1 de
+     system.md ("nunca inventes números; si no tienes el dato,
+     consúltalo con una tool"): la decisión de asignación es la MÁS
+     consecuencial del plan y se tomaba sin mirar ningún dato real.
+     Ahora los templates son el ANCLA y sobre ellos se aplican ajustes
+     incrementales (en puntos porcentuales) por: (a) contexto macro
+     del market_intelligence_skill — RSI SPY/QQQ, TVL trend, BTC
+     dominance; (b) horizonte numérico en meses — <12m reduce equity
+     y sube reserve, >=36m lo inverso; (c) preferencias del usuario;
+     (d) régimen de capital pequeño (<$200) que fuerza consolidación
+     para cumplir mínimos de venue. Devuelve `rationale` (list[str])
+     y `adjustments_applied` (trazabilidad pp a pp) para que el plan
+     explique al usuario qué ajustes se aplicaron y por qué. Los
+     ajustes están capeados (±8pp por vertical) para no violar
+     risk_rules.md R1/R2 y el piso de reserve (R3) se aplica siempre.
 
 Ejecutar: uv run --no-project --with fastmcp server.py
 """
@@ -526,43 +545,575 @@ def calculate_position_size(
     }
 
 
+# ============================================================
+# ALLOCATE_PORTFOLIO — v8: asignación dinámica
+# ============================================================
+# Antes: 4 plantillas Python literales (conservative/moderate/aggressive/mixed).
+# Dos usuarios "agresivos" con $1000 obtenían SIEMPRE el mismo split, sin mirar
+# al mercado (RSI SPY/QQQ, TVL DeFi, BTC dominance del market_intelligence_skill),
+# ni al horizonte numérico, ni a preferencias, ni a capital operativo real.
+#
+# Ahora: los templates se usan como ANCLA y sobre ellos se aplican ajustes
+# incrementales en puntos porcentuales (pp), con topes de seguridad para no
+# violar risk_rules.md (R1 30% posición / R2 50% vertical / R3 10% reserve).
+#
+# Ajustes en orden:
+#   1) Exclusiones del usuario (redistribución a otros verticales direccionales).
+#   2) Macro (RSI SPY/QQQ, TVL trend DeFi, BTC dominance) — ±5pp típico.
+#   3) Horizonte (horizon_months numérico) — horizonte corto reduce equity
+#      y aumenta reserve/defi-stable; horizonte largo hace lo inverso.
+#   4) Preferencias del usuario (preferred_verticals) — +3pp a cada preferido
+#      descontado pro-rata de los no preferidos direccionales.
+#   5) Floor de reserve (10% R3 estricto, salvo aggressive que admite 5%).
+#   6) Concentración por capital pequeño (<$200) — fuerza 1-2 verticales
+#      para que cada slice sea viable en mínimos de venue.
+#
+# Devuelve también `rationale` (lista de strings legibles) y
+# `adjustments_applied` (trazabilidad estructurada pp por pp).
+# ============================================================
+
+# Templates ancla (compat retro con v7). Expuestos como constante para
+# que tests y auditoría puedan inspeccionarlos sin importar la función.
+ALLOCATION_TEMPLATES = {
+    "conservative": {"equity": 50, "defi": 20, "forex": 0,  "social": 15, "reserve": 15},
+    "moderate":     {"equity": 40, "defi": 25, "forex": 10, "social": 15, "reserve": 10},
+    "aggressive":   {"equity": 30, "defi": 30, "forex": 20, "social": 15, "reserve": 5},
+    "mixed":        {"equity": 35, "defi": 25, "forex": 15, "social": 15, "reserve": 10},
+}
+
+# Piso de reserve por perfil (R3 de risk_rules.md — estricto 10%, excepto
+# aggressive donde el template ancla ya baja a 5% y lo respetamos).
+_RESERVE_FLOOR = {
+    "conservative": 10.0,
+    "moderate":     10.0,
+    "aggressive":   5.0,
+    "mixed":        10.0,
+}
+
+# Umbrales RSI para sobreventa / sobrecompra (convención técnica estándar).
+_RSI_OVERSOLD = 30
+_RSI_OVERBOUGHT = 70
+
+# Mapeo horizonte string → meses (fallback si solo llega el string viejo).
+_HORIZON_STRING_TO_MONTHS = {
+    "short": 9,      # <1 año, punto medio del rango corto
+    "medium": 24,    # 1-3 años
+    "long": 60,      # >3 años, 5y como proxy
+    "combined": 24,  # tratar como medio por defecto
+}
+
+# Capital operativo mínimo por slice para que una posición en un vertical
+# sea viable en los venues del sistema (eToro CFD $50 + copy $200 + spread).
+# Por debajo de este umbral, el slice se consolida con otro vertical.
+_MIN_SLICE_USD = 75.0
+_SMALL_CAPITAL_THRESHOLD_USD = 200.0
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
+def _redistribute_excluded(
+    base: dict, excluded: set, directional: list
+) -> dict:
+    """Saca a cero los verticales excluidos y reparte su peso entre los
+    direccionales restantes (no en reserve, que tiene piso propio)."""
+    out = dict(base)
+    for v in excluded:
+        if v in out and v != "reserve":
+            dropped = out[v]
+            out[v] = 0
+            remaining = [
+                k for k in directional
+                if k not in excluded and out.get(k, 0) > 0
+            ]
+            if remaining:
+                per = dropped / len(remaining)
+                for r in remaining:
+                    out[r] += per
+            else:
+                # No hay a dónde mover → va a reserve (safe harbor).
+                out["reserve"] = out.get("reserve", 0) + dropped
+    return out
+
+
+def _apply_macro_adjustments(
+    alloc: dict, macro: dict, excluded: set
+) -> tuple[dict, list[str], list[dict]]:
+    """Ajusta pesos según contexto macro. Deltas en pp, capeados a ±8pp
+    totales por vertical para no romper risk_rules R2. Retorna alloc
+    ajustada, rationale (strings) y trace (dicts)."""
+    out = dict(alloc)
+    rationale: list[str] = []
+    trace: list[dict] = []
+    if not macro:
+        return out, rationale, trace
+
+    # ---- RSI SPY: sobreventa → +5pp equity, sobrecompra → -5pp equity.
+    rsi_spy = macro.get("rsi_spy")
+    if isinstance(rsi_spy, (int, float)) and "equity" not in excluded:
+        if rsi_spy < _RSI_OVERSOLD:
+            delta = +5.0
+            out["equity"] += delta
+            rationale.append(
+                f"RSI(SPY)={rsi_spy:.0f} < {_RSI_OVERSOLD}: sobreventa macro, "
+                f"+{delta:.0f}pp a equity."
+            )
+            trace.append({"source": "rsi_spy", "vertical": "equity", "delta_pp": delta})
+        elif rsi_spy > _RSI_OVERBOUGHT:
+            delta = -5.0
+            out["equity"] += delta
+            rationale.append(
+                f"RSI(SPY)={rsi_spy:.0f} > {_RSI_OVERBOUGHT}: sobrecompra macro, "
+                f"{delta:.0f}pp a equity."
+            )
+            trace.append({"source": "rsi_spy", "vertical": "equity", "delta_pp": delta})
+
+    # ---- RSI QQQ: mismo tratamiento pero con peso menor (±3pp) porque
+    # QQQ y SPY están altamente correlacionados; evitamos doble conteo.
+    rsi_qqq = macro.get("rsi_qqq")
+    if isinstance(rsi_qqq, (int, float)) and "equity" not in excluded:
+        if rsi_qqq < _RSI_OVERSOLD:
+            delta = +3.0
+            out["equity"] += delta
+            rationale.append(
+                f"RSI(QQQ)={rsi_qqq:.0f} < {_RSI_OVERSOLD}: sobreventa tech, "
+                f"+{delta:.0f}pp a equity."
+            )
+            trace.append({"source": "rsi_qqq", "vertical": "equity", "delta_pp": delta})
+        elif rsi_qqq > _RSI_OVERBOUGHT:
+            delta = -3.0
+            out["equity"] += delta
+            rationale.append(
+                f"RSI(QQQ)={rsi_qqq:.0f} > {_RSI_OVERBOUGHT}: sobrecompra tech, "
+                f"{delta:.0f}pp a equity."
+            )
+            trace.append({"source": "rsi_qqq", "vertical": "equity", "delta_pp": delta})
+
+    # ---- TVL trend DeFi: "up" → +4pp defi, "down" → -4pp defi.
+    # Acepta tanto string ("up"/"down"/"flat") como número (% cambio 30d).
+    tvl_trend = macro.get("tvl_trend")
+    if tvl_trend is not None and "defi" not in excluded:
+        tvl_up = (isinstance(tvl_trend, str) and tvl_trend.lower() == "up") or \
+                 (isinstance(tvl_trend, (int, float)) and tvl_trend > 10)
+        tvl_down = (isinstance(tvl_trend, str) and tvl_trend.lower() == "down") or \
+                   (isinstance(tvl_trend, (int, float)) and tvl_trend < -10)
+        if tvl_up:
+            delta = +4.0
+            out["defi"] += delta
+            rationale.append(
+                f"TVL DeFi en tendencia alcista ({tvl_trend}): +{delta:.0f}pp a defi."
+            )
+            trace.append({"source": "tvl_trend", "vertical": "defi", "delta_pp": delta})
+        elif tvl_down:
+            delta = -4.0
+            out["defi"] += delta
+            rationale.append(
+                f"TVL DeFi en tendencia bajista ({tvl_trend}): {delta:.0f}pp a defi."
+            )
+            trace.append({"source": "tvl_trend", "vertical": "defi", "delta_pp": delta})
+
+    # ---- BTC dominance: > 60% → cripto concentrado en BTC, alts sufren
+    # (-3pp defi); < 45% → alt season, algo más de espacio (+3pp defi).
+    btc_dom = macro.get("btc_dominance")
+    if isinstance(btc_dom, (int, float)) and "defi" not in excluded:
+        if btc_dom > 60:
+            delta = -3.0
+            out["defi"] += delta
+            rationale.append(
+                f"BTC dominance={btc_dom:.1f}% > 60%: régimen BTC-heavy, "
+                f"alts debilitados, {delta:.0f}pp a defi."
+            )
+            trace.append({"source": "btc_dominance", "vertical": "defi", "delta_pp": delta})
+        elif btc_dom < 45:
+            delta = +3.0
+            out["defi"] += delta
+            rationale.append(
+                f"BTC dominance={btc_dom:.1f}% < 45%: posible alt season, "
+                f"+{delta:.0f}pp a defi."
+            )
+            trace.append({"source": "btc_dominance", "vertical": "defi", "delta_pp": delta})
+
+    # Cap total de deltas por vertical (±8pp) — evita sobrerreacción si
+    # varias señales empujan en el mismo sentido. Compara contra el alloc
+    # pre-macro que recibimos.
+    for v in out:
+        net_delta = out[v] - alloc[v]
+        if abs(net_delta) > 8.0:
+            capped = _clamp(net_delta, -8.0, 8.0)
+            out[v] = alloc[v] + capped
+            rationale.append(
+                f"Ajuste macro neto a {v} capeado a {capped:+.0f}pp "
+                f"(de {net_delta:+.1f}pp) para respetar risk_rules."
+            )
+            trace.append({"source": "cap", "vertical": v, "delta_pp": capped - net_delta})
+
+    return out, rationale, trace
+
+
+def _apply_horizon_adjustment(
+    alloc: dict, horizon_months: float, excluded: set
+) -> tuple[dict, list[str], list[dict]]:
+    """Horizonte corto (<12m) → menos equity, más reserve/defi estable.
+    Horizonte largo (>=36m) → lo inverso, mayor equity, menor reserve.
+    Deltas modestos (±4pp) porque horizonte ya está reflejado en el
+    risk_tolerance del usuario a menudo."""
+    out = dict(alloc)
+    rationale: list[str] = []
+    trace: list[dict] = []
+
+    if horizon_months < 12:
+        # Corto plazo: reducir equity (volátil), subir reserve (liquidez).
+        delta_equity = -4.0
+        delta_reserve = +4.0
+        if "equity" not in excluded:
+            out["equity"] += delta_equity
+            out["reserve"] += delta_reserve
+            rationale.append(
+                f"Horizonte={horizon_months:.0f}m < 12m: prioridad liquidez, "
+                f"{delta_equity:.0f}pp equity → +{delta_reserve:.0f}pp reserve."
+            )
+            trace.append({"source": "horizon_short", "vertical": "equity",  "delta_pp": delta_equity})
+            trace.append({"source": "horizon_short", "vertical": "reserve", "delta_pp": delta_reserve})
+    elif horizon_months >= 36:
+        # Largo plazo: espacio para equity (compounding), menos cash drag.
+        delta_equity = +4.0
+        delta_reserve = -2.0
+        delta_forex = -2.0 if "forex" not in excluded else 0.0
+        if "equity" not in excluded:
+            out["equity"] += delta_equity
+            out["reserve"] += delta_reserve
+            out["forex"] += delta_forex
+            msg = (
+                f"Horizonte={horizon_months:.0f}m >= 36m: ventana para compounding, "
+                f"+{delta_equity:.0f}pp equity, {delta_reserve:.0f}pp reserve"
+            )
+            if delta_forex:
+                msg += f", {delta_forex:.0f}pp forex"
+            msg += "."
+            rationale.append(msg)
+            trace.append({"source": "horizon_long", "vertical": "equity",  "delta_pp": delta_equity})
+            trace.append({"source": "horizon_long", "vertical": "reserve", "delta_pp": delta_reserve})
+            if delta_forex:
+                trace.append({"source": "horizon_long", "vertical": "forex", "delta_pp": delta_forex})
+    # 12-36m: zona neutra, no se toca.
+
+    return out, rationale, trace
+
+
+def _apply_preferences(
+    alloc: dict, preferred: list[str], excluded: set
+) -> tuple[dict, list[str], list[dict]]:
+    """El usuario marcó preferencia por ciertos verticales → +3pp a cada
+    preferido, descontado pro-rata de los direccionales no preferidos.
+    No toca reserve."""
+    out = dict(alloc)
+    rationale: list[str] = []
+    trace: list[dict] = []
+    if not preferred:
+        return out, rationale, trace
+
+    directional = ["equity", "defi", "forex", "social"]
+    valid_prefs = [
+        v for v in preferred
+        if v in directional and v not in excluded and out.get(v, 0) > 0
+    ]
+    if not valid_prefs:
+        return out, rationale, trace
+
+    boost_per_pref = 3.0
+    total_boost = boost_per_pref * len(valid_prefs)
+    donors = [
+        v for v in directional
+        if v not in valid_prefs and v not in excluded and out.get(v, 0) > 0
+    ]
+    if not donors:
+        # Sin donantes direccionales, descontar de reserve (pero sin pasar
+        # del piso — el chequeo de piso posterior lo corrige si hace falta).
+        out["reserve"] -= total_boost
+        for v in valid_prefs:
+            out[v] += boost_per_pref
+            trace.append({"source": "preference", "vertical": v, "delta_pp": boost_per_pref})
+        trace.append({"source": "preference", "vertical": "reserve", "delta_pp": -total_boost})
+    else:
+        per_donor = total_boost / len(donors)
+        for v in valid_prefs:
+            out[v] += boost_per_pref
+            trace.append({"source": "preference", "vertical": v, "delta_pp": boost_per_pref})
+        for v in donors:
+            out[v] -= per_donor
+            trace.append({"source": "preference", "vertical": v, "delta_pp": -per_donor})
+
+    rationale.append(
+        f"Preferencia del usuario por {valid_prefs}: +{boost_per_pref:.0f}pp a cada uno, "
+        f"descontado pro-rata de {donors}."
+    )
+    return out, rationale, trace
+
+
+def _enforce_reserve_floor(
+    alloc: dict, risk_tolerance: str
+) -> tuple[dict, list[str]]:
+    """Aplica R3 de risk_rules.md: reserve >= floor del perfil.
+    Si falta, se toma pro-rata de los direccionales."""
+    out = dict(alloc)
+    rationale: list[str] = []
+    floor = _RESERVE_FLOOR.get(risk_tolerance, 10.0)
+    if out.get("reserve", 0) < floor:
+        deficit = floor - out["reserve"]
+        directional = ["equity", "defi", "forex", "social"]
+        donors = [v for v in directional if out.get(v, 0) > 0]
+        if donors:
+            total_donor = sum(out[v] for v in donors)
+            for v in donors:
+                out[v] -= deficit * (out[v] / total_donor)
+            out["reserve"] = floor
+            rationale.append(
+                f"Reserve subida a {floor:.0f}% (piso R3 para perfil {risk_tolerance})."
+            )
+    return out, rationale
+
+
+def _clamp_negatives(alloc: dict) -> dict:
+    """Después de tantos ajustes, un vertical podría quedar en negativo.
+    Lo saturamos a 0 (no se reinyecta — el renormalizado final lo corrige)."""
+    return {k: max(0.0, v) for k, v in alloc.items()}
+
+
+def _concentrate_small_capital(
+    allocation_pct: dict, capital_usd: float, risk_tolerance: str, excluded: set
+) -> tuple[dict, list[str], list[dict]]:
+    """Capital <$200 + N verticales = slices <$50 = inviable por mínimos
+    de venue (ver VENUE_MINIMUMS_USD). Consolidamos en el/los verticales
+    con mayor peso hasta que cada slice restante sea >= _MIN_SLICE_USD.
+    Reserve se mantiene al piso del perfil."""
+    rationale: list[str] = []
+    trace: list[dict] = []
+
+    if capital_usd >= _SMALL_CAPITAL_THRESHOLD_USD:
+        return allocation_pct, rationale, trace
+
+    floor = _RESERVE_FLOOR.get(risk_tolerance, 10.0)
+    directional = ["equity", "defi", "forex", "social"]
+    # Pesos actuales en USD.
+    slices_usd = {k: capital_usd * v / 100 for k, v in allocation_pct.items()}
+    # Identificar slices direccionales inviables.
+    weak = [
+        v for v in directional
+        if v not in excluded
+        and allocation_pct.get(v, 0) > 0
+        and slices_usd[v] < _MIN_SLICE_USD
+    ]
+    if not weak:
+        return allocation_pct, rationale, trace
+
+    # Estrategia: consolidar todos los slices débiles en el vertical
+    # direccional viable más pesado. Si ninguno es viable, dejar solo
+    # el de mayor peso + reserve.
+    candidates = [
+        v for v in directional
+        if v not in excluded and allocation_pct.get(v, 0) > 0
+    ]
+    if not candidates:
+        return allocation_pct, rationale, trace
+
+    # Ordenar por peso descendente — el "dominante" recibe la consolidación.
+    candidates.sort(key=lambda v: allocation_pct[v], reverse=True)
+    dominant = candidates[0]
+
+    out = dict(allocation_pct)
+    absorbed = 0.0
+    absorbed_from: list[str] = []
+    for v in weak:
+        if v == dominant:
+            continue
+        absorbed += out[v]
+        absorbed_from.append(v)
+        out[v] = 0.0
+        trace.append({"source": "small_capital", "vertical": v, "delta_pp": -allocation_pct[v]})
+
+    if absorbed > 0:
+        out[dominant] += absorbed
+        trace.append({"source": "small_capital", "vertical": dominant, "delta_pp": absorbed})
+        rationale.append(
+            f"Capital ${capital_usd:.0f} < ${_SMALL_CAPITAL_THRESHOLD_USD:.0f}: "
+            f"verticales {absorbed_from} tenían slices < ${_MIN_SLICE_USD:.0f} "
+            f"(inviables por mínimos de venue); consolidados en '{dominant}'."
+        )
+
+    # Verificar que el dominant ahora sea viable. Si no, ampliar reserve.
+    if capital_usd * out[dominant] / 100 < _MIN_SLICE_USD:
+        # Caso extremo: ni consolidado llega al mínimo → todo a reserve.
+        moved = out[dominant]
+        out["reserve"] = out.get("reserve", 0) + moved
+        out[dominant] = 0.0
+        rationale.append(
+            f"Ni consolidado el vertical '{dominant}' alcanza ${_MIN_SLICE_USD:.0f}; "
+            f"capital redirigido a reserve (stablecoin lending) hasta acumular más."
+        )
+        trace.append({"source": "small_capital", "vertical": dominant, "delta_pp": -moved})
+        trace.append({"source": "small_capital", "vertical": "reserve", "delta_pp": +moved})
+    elif out.get("reserve", 0) < floor:
+        # Respetar piso de reserve también en este régimen.
+        deficit = floor - out["reserve"]
+        out[dominant] -= deficit
+        out["reserve"] = floor
+        trace.append({"source": "small_capital_reserve_floor", "vertical": dominant, "delta_pp": -deficit})
+
+    return out, rationale, trace
+
+
 @mcp.tool()
 def allocate_portfolio(
-    capital_usd: float, monthly_savings_usd: float,
-    risk_tolerance: str, horizon: str, exclude_verticals: list[str] | None = None,
+    capital_usd: float,
+    monthly_savings_usd: float,
+    risk_tolerance: str,
+    horizon: str,
+    exclude_verticals: list[str] | None = None,
+    macro_context: dict | None = None,
+    user_age: int | None = None,
+    horizon_months: float | None = None,
+    preferred_verticals: list[str] | None = None,
 ) -> dict:
     """
-    Genera la asignacion de portafolio por vertical.
+    Genera la asignación de portafolio por vertical DE FORMA DINÁMICA.
+
+    En vez de elegir una plantilla fija por risk_tolerance, usa la plantilla
+    como ancla y aplica ajustes incrementales (en pp) por contexto macro,
+    horizonte, edad y preferencias del usuario. Los ajustes están capeados
+    para no violar risk_rules.md (R2 50% por vertical, R3 reserve mínimo).
 
     Args:
-        capital_usd: Capital total
-        monthly_savings_usd: Ahorro mensual
-        risk_tolerance: "conservative", "moderate", "aggressive", "mixed"
-        horizon: "short", "medium", "long", "combined"
-        exclude_verticals: Verticales a excluir
+        capital_usd: Capital total en USD.
+        monthly_savings_usd: Ahorro mensual en USD (reservado para futura
+            proyección 12m; actualmente no modifica la asignación).
+        risk_tolerance: "conservative" | "moderate" | "aggressive" | "mixed".
+            Define el template ANCLA, no el resultado final.
+        horizon: "short" | "medium" | "long" | "combined". Se usa como
+            fallback si horizon_months no se provee. Preferir horizon_months.
+        exclude_verticals: Verticales a excluir del plan. Su peso se
+            redistribuye entre los direccionales restantes.
+        macro_context: dict opcional del market_intelligence_skill. Claves
+            soportadas (todas opcionales):
+              - rsi_spy (float): RSI(14) de SPY. <30 → +5pp equity; >70 → -5pp equity.
+              - rsi_qqq (float): RSI(14) de QQQ. <30 → +3pp equity; >70 → -3pp equity.
+              - tvl_trend ("up"|"down"|"flat" o número): tendencia TVL DeFi 30d.
+                "up" o >+10% → +4pp defi; "down" o <-10% → -4pp defi.
+              - btc_dominance (float 0-100): >60 → -3pp defi; <45 → +3pp defi.
+        user_age: Edad del usuario. Reservado para regla "120 - edad =
+            % equity sugerido" (no implementada aún en v8; se documenta
+            en rationale si se provee).
+        horizon_months: Horizonte numérico en meses. <12 → reduce equity
+            y sube reserve; >=36 → sube equity. Tiene prioridad sobre `horizon`.
+        preferred_verticals: Lista opcional de verticales que el usuario
+            quiere sobreponderar. +3pp a cada preferido, descontado
+            pro-rata de los direccionales no preferidos.
+
+    Returns:
+        dict con:
+          - allocation_pct: {vertical: % del portafolio}
+          - allocation_usd: {vertical: USD asignados}
+          - rationale: list[str] legible con cada ajuste aplicado
+          - adjustments_applied: list[dict] trazabilidad estructurada
+          - base_template: nombre del template ancla usado
+          - effective_horizon_months: horizonte numérico resuelto
     """
     excluded = set(exclude_verticals or [])
-    templates = {
-        "conservative": {"equity": 50, "defi": 20, "forex": 0, "social": 15, "reserve": 15},
-        "moderate": {"equity": 40, "defi": 25, "forex": 10, "social": 15, "reserve": 10},
-        "aggressive": {"equity": 30, "defi": 30, "forex": 20, "social": 15, "reserve": 5},
-        "mixed": {"equity": 35, "defi": 25, "forex": 15, "social": 15, "reserve": 10},
-    }
-    base = templates.get(risk_tolerance, templates["moderate"]).copy()
-    for v in excluded:
-        if v in base and v != "reserve":
-            redistributed = base[v]
-            base[v] = 0
-            remaining = [k for k in base if k not in excluded and k != "reserve" and base[k] > 0]
-            if remaining:
-                for r in remaining:
-                    base[r] += redistributed / len(remaining)
+    rationale: list[str] = []
+    trace: list[dict] = []
 
-    total_pct = sum(base.values())
-    allocation = {k: round(v / total_pct * 100, 1) for k, v in base.items()}
+    # ---- Normalización de inputs ----
+    risk_tolerance = risk_tolerance if risk_tolerance in ALLOCATION_TEMPLATES else "moderate"
+    if horizon_months is None or horizon_months <= 0:
+        horizon_months = float(_HORIZON_STRING_TO_MONTHS.get(horizon, 24))
+        rationale.append(
+            f"Horizonte numérico no provisto: usando fallback de horizon='{horizon}' "
+            f"→ {horizon_months:.0f}m."
+        )
+
+    # ---- Paso 0: template ancla ----
+    alloc = dict(ALLOCATION_TEMPLATES[risk_tolerance])
+    rationale.append(
+        f"Template ancla '{risk_tolerance}': "
+        + ", ".join(f"{k}={v}%" for k, v in alloc.items()) + "."
+    )
+
+    # ---- Paso 1: exclusiones del usuario ----
+    if excluded:
+        directional = ["equity", "defi", "forex", "social"]
+        alloc = _redistribute_excluded(alloc, excluded, directional)
+        rationale.append(
+            f"Verticales excluidos {sorted(excluded)}: peso redistribuido "
+            f"a los direccionales restantes."
+        )
+
+    # ---- Paso 2: ajustes macro ----
+    alloc_pre_macro = dict(alloc)
+    alloc, macro_rationale, macro_trace = _apply_macro_adjustments(
+        alloc, macro_context or {}, excluded
+    )
+    rationale.extend(macro_rationale)
+    trace.extend(macro_trace)
+
+    # ---- Paso 3: ajuste por horizonte numérico ----
+    alloc, horizon_rationale, horizon_trace = _apply_horizon_adjustment(
+        alloc, horizon_months, excluded
+    )
+    rationale.extend(horizon_rationale)
+    trace.extend(horizon_trace)
+
+    # ---- Paso 3b: nota informativa por edad (no altera pesos en v8) ----
+    if user_age is not None and user_age > 0:
+        equity_guideline = max(10, min(90, 120 - user_age))
+        rationale.append(
+            f"Edad={user_age}: regla 120-edad sugiere ~{equity_guideline}% en "
+            f"equity como referencia (no se aplicó ajuste automático en v8; "
+            f"revisar manualmente si diverge mucho del resultado)."
+        )
+
+    # ---- Paso 4: preferencias del usuario ----
+    alloc, pref_rationale, pref_trace = _apply_preferences(
+        alloc, preferred_verticals or [], excluded
+    )
+    rationale.extend(pref_rationale)
+    trace.extend(pref_trace)
+
+    # ---- Paso 5: saturar negativos y aplicar piso de reserve ----
+    alloc = _clamp_negatives(alloc)
+    alloc, reserve_rationale = _enforce_reserve_floor(alloc, risk_tolerance)
+    rationale.extend(reserve_rationale)
+
+    # ---- Paso 6: renormalizar a 100% ----
+    total_pct = sum(alloc.values())
+    if total_pct <= 0:
+        # Degenerado: todo se canceló → fallback al template ancla.
+        alloc = dict(ALLOCATION_TEMPLATES[risk_tolerance])
+        total_pct = sum(alloc.values())
+        rationale.append("Ajustes saturaron a 0; fallback al template ancla.")
+    allocation_pct = {k: round(v / total_pct * 100, 1) for k, v in alloc.items()}
+
+    # ---- Paso 7: concentración por capital pequeño ----
+    allocation_pct, small_rationale, small_trace = _concentrate_small_capital(
+        allocation_pct, capital_usd, risk_tolerance, excluded
+    )
+    rationale.extend(small_rationale)
+    trace.extend(small_trace)
+    # Renormalizar por si la consolidación dejó totales != 100 por redondeo.
+    tp = sum(allocation_pct.values())
+    if tp > 0:
+        allocation_pct = {k: round(v / tp * 100, 1) for k, v in allocation_pct.items()}
+
+    allocation_usd = {
+        k: round(capital_usd * v / 100, 2) for k, v in allocation_pct.items()
+    }
+
     return {
-        "allocation_pct": allocation,
-        "allocation_usd": {k: round(capital_usd * v / 100, 2) for k, v in allocation.items()},
+        "allocation_pct": allocation_pct,
+        "allocation_usd": allocation_usd,
+        "rationale": rationale,
+        "adjustments_applied": trace,
+        "base_template": risk_tolerance,
+        "effective_horizon_months": horizon_months,
     }
 
 
