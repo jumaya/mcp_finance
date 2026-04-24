@@ -1,4 +1,11 @@
-# Skill: Acciones y ETFs — v8
+# Skill: Acciones y ETFs — v8.1
+
+> **Changelog v8.1:** la tabla de volatilidades pasa de "valores exactos
+> obligatorios" a **fallback documentado**. Fuente primaria ahora es el
+> cálculo en vivo desde Alpha Vantage (`TIME_SERIES_DAILY`, últimos 30 días
+> para `volatility_30d` y ~252 días para `max_drawdown_12m`). La tabla
+> solo se usa cuando la tool falla, con motivo logueado al usuario.
+> Ver § "Volatilidad y max drawdown: fuente primaria vs. fallback".
 
 ## Activos por riesgo
 ```
@@ -21,9 +28,61 @@ Riesgo ALTO → CFD 2x en acciones de convicción
   Pérdida -50% con 2x = LIQUIDACIÓN TOTAL
 ```
 
-## Tabla de volatilidades por ticker (usar en calculate_risk_score)
+## Volatilidad y max drawdown: fuente primaria vs. fallback
+
+**Regla dura (v8.1):** el valor de `volatility_30d` y `max_drawdown_12m`
+que se pasa a `calculate_risk_score` SIEMPRE se prefiere calculado en
+vivo desde Alpha Vantage sobre los últimos 30 días (vol) y últimos
+12 meses (drawdown). La tabla de abajo es **solo fallback documentado**
+cuando la tool falla, devuelve rate-limit, o no tiene data suficiente
+para el ticker.
+
+### Protocolo de cálculo (fuente primaria — Alpha Vantage)
+
 ```
-USAR ESTOS VALORES EXACTOS — no estimar ni usar rangos:
+POR CADA ticker, antes de llamar calculate_risk_score:
+
+  1. Pedir serie diaria:
+     alphavantage.TOOL_CALL(
+       name="TIME_SERIES_DAILY",
+       symbol="<TICKER>",
+       outputsize="compact"    ← últimos ~100 días, suficiente
+     )
+
+  2. Calcular volatility_30d:
+     → tomar los últimos 30 cierres diarios
+     → calcular retornos logarítmicos: r_t = ln(P_t / P_{t-1})
+     → stdev muestral de esos 30 retornos → σ_daily
+     → anualizar: volatility_30d = σ_daily * sqrt(252)
+     → redondear a 2 decimales
+
+  3. Calcular max_drawdown_12m:
+     → con outputsize="compact" (~100 días) solo cubre ~5 meses,
+       así que si se necesita drawdown real 12m pedir:
+       alphavantage.TOOL_CALL(name="TIME_SERIES_DAILY",
+                              symbol="<TICKER>", outputsize="full")
+     → tomar los últimos 252 cierres (~12 meses)
+     → running_max = max acumulado del precio
+     → drawdown_t = (P_t - running_max_t) / running_max_t
+     → max_drawdown_12m = min(drawdown_t)  (número negativo)
+
+  4. Loguear en la respuesta al usuario (sección datos):
+     "volatility_30d=0.XX (calculada en vivo desde Alpha Vantage,
+      30d hasta <fecha>)"
+
+Criterios para caer a fallback:
+  - La tool devuelve error, rate-limit (nota "call frequency"),
+    o payload vacío.
+  - Hay < 20 cierres diarios disponibles (ticker nuevo o suspendido).
+  - El número calculado sale fuera de [0.03, 1.50] para vol anual
+    (claro síntoma de data corrupta).
+```
+
+### Tabla de fallback (usar SOLO si falla el cálculo en vivo)
+
+```
+⚠️ ÚLTIMA VERIFICACIÓN: abril 2026. Estos valores envejecen;
+trátalos como referencia de emergencia, no como verdad.
 
 | Ticker | volatility_30d | max_drawdown_12m | Notas                    |
 |--------|---------------|------------------|--------------------------|
@@ -47,28 +106,55 @@ USAR ESTOS VALORES EXACTOS — no estimar ni usar rangos:
 | QQQ    | 0.12          | -0.20            | ETF Nasdaq 100           |
 | VOO    | 0.08          | -0.15            | ETF S&P 500              |
 
-Si el ticker NO está en esta tabla:
-  → Buscar volatilidad real en Alpha Vantage o TradingView
-  → Usar como referencia el activo más similar de la tabla
+Cuándo usar esta tabla:
+  1. La tool Alpha Vantage falló (ver "Criterios para caer a fallback")
+     → usar el valor de la tabla Y loguear explícitamente:
+       "volatility_30d=0.XX (FALLBACK tabla equity_skill, Alpha Vantage
+        no disponible: <motivo>)"
+  2. El ticker NO está en esta tabla Y Alpha Vantage falló
+     → usar como proxy el activo más similar de la tabla (mismo sector
+       + beta similar) y loguear el proxy:
+       "volatility_30d=0.XX (FALLBACK proxy de <TICKER_SIMILAR>,
+        Alpha Vantage no disponible)"
+  3. Si NADA de lo anterior aplica (ticker nuevo, sin proxy claro,
+     Alpha Vantage caído) → NO inventar: informar al usuario
+     "no es posible calcular risk score confiable para <TICKER>
+      ahora mismo" y descartar el ticker para esta sesión.
+
+La tabla NUNCA se usa si la tool devolvió un número válido, aunque
+el número de la tool difiera del de la tabla. El número real del
+mercado manda.
 ```
 
 ## Cómo llamar calculate_risk_score (ejemplo)
 ```
-Para NOW con CFD 2x, peso 35%:
+Para NOW con CFD 2x, peso 35% (cálculo en vivo, caso normal):
+  # Paso previo: alphavantage TIME_SERIES_DAILY → σ_anual ≈ 0.31
+  # Paso previo: running max sobre 252 cierres → dd ≈ -0.38
   calculate_risk_score(
-    volatility_30d=0.30,      ← de la tabla
-    max_drawdown_12m=-0.40,   ← de la tabla
+    volatility_30d=0.31,      ← calculada en vivo (Alpha Vantage 30d)
+    max_drawdown_12m=-0.38,   ← calculada en vivo (AV 12m)
     liquidity="instant",
     platform_regulated=true,
     weight_in_portfolio_pct=35,
     leverage=2.0
   )
-  Resultado esperado: ~7.5-8.5 "high" (por la tabla + leverage floor del server.py)
+  Resultado esperado: ~7.5-8.5 "high" (leverage floor del server.py)
+
+Para NOW con CFD 2x (modo fallback, si Alpha Vantage cayó):
+  calculate_risk_score(
+    volatility_30d=0.30,      ← FALLBACK tabla equity_skill (loguear)
+    max_drawdown_12m=-0.40,   ← FALLBACK tabla equity_skill (loguear)
+    liquidity="instant",
+    platform_regulated=true,
+    weight_in_portfolio_pct=35,
+    leverage=2.0
+  )
 
 Para AAPL spot, peso 20%:
   calculate_risk_score(
-    volatility_30d=0.12,
-    max_drawdown_12m=-0.20,
+    volatility_30d=0.12,      ← calculada en vivo si AV responde,
+    max_drawdown_12m=-0.20,   ←  si no, fallback tabla
     liquidity="instant",
     platform_regulated=true,
     weight_in_portfolio_pct=20,
@@ -315,7 +401,14 @@ POR CADA acción candidata (en este ORDEN):
      etoro-server.search_instruments(query="<TICKER>", ...)
      → si no pasa, DESCARTAR y no seguir con esta candidata
 
-  1. Alpha Vantage → precio, RSI, MACD, SMA50, SMA200
+  1. Alpha Vantage → precio, RSI, MACD, SMA50, SMA200, TIME_SERIES_DAILY
+     → Calcular EN VIVO volatility_30d y max_drawdown_12m desde la
+       serie diaria (ver § "Volatilidad y max drawdown: fuente primaria
+       vs. fallback" arriba para la fórmula exacta).
+     → Si la tool falla / rate-limit / data insuficiente:
+         usar el valor de la tabla de fallback y LOGUEAR
+         explícitamente el motivo en la sección de datos del plan.
+     → Guardar vol_calculada y dd_calculado para pasos 4 y 5.
   2. Yahoo Finance → yfinance_get_ticker_info(symbol="<TICKER>")
      → extraer TODOS los campos obligatorios de la sección
        "Extracción de datos de ticker_info" (earnings + consenso
@@ -331,9 +424,11 @@ POR CADA acción candidata (en este ORDEN):
        el Tab 1 y considerar reemplazo o entrada pospuesta.
      → Los SL/TP técnicos SUSTITUYEN a cualquier SL/TP "redondo"
        (ej. -10%) que se hubiera considerado.
-  4. calculate_risk_score(vol_tabla, dd_tabla, "instant", true, peso, leverage)
+  4. calculate_risk_score(vol_calculada, dd_calculado, "instant", true, peso, leverage)
+     → vol y dd vienen del paso 1 (preferente: cálculo en vivo;
+       fallback: tabla, con motivo logueado).
   5. calculate_scenarios(
-        monto, apy, vol_tabla, passive_bruto, meses, leverage, monthly_cost,
+        monto, apy, vol_calculada, passive_bruto, meses, leverage, monthly_cost,
         dividend_withholding_pct=0.30 si US y paga dividendo (else 0.0)
      )
      → Pasar dividendo BRUTO; la tool aplica la retención.
@@ -355,3 +450,12 @@ no son aceptables salvo que technical_skill haya reportado explícitamente
 usuario no contiene una fecha concreta de earnings (o la nota
 "no disponible vía Yahoo Finance"), el paso 2 no está completo.
 Volver a leer el payload.
+
+**Invariante volatilidad:** el número que entra a `calculate_risk_score`
+y `calculate_scenarios` como `volatility_30d` debe ser trazable a una
+de estas dos fuentes (en este orden de preferencia):
+  1. Cálculo en vivo sobre TIME_SERIES_DAILY de Alpha Vantage (preferido).
+  2. Tabla de fallback documentada en este skill (solo si 1 falló,
+     con el motivo logueado al usuario).
+Si no se puede garantizar ninguna de las dos, descartar el ticker;
+no inventar un número "aproximado".
