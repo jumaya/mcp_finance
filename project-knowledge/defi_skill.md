@@ -1,11 +1,22 @@
-# Skill: Agente de cripto, staking y DeFi — v2
+# Skill: Agente de cripto, staking y DeFi — v3
+
+> **Changelog v3:** eliminadas las menciones cerradas a BTC/ETH/SOL como
+> el universo cripto direccional por defecto. Los candidatos direccionales
+> ahora se **descubren dinámicamente** vía `tradingview.screen_crypto` o
+> `defillama.get_pools` con filtros derivados del **perfil** del usuario
+> (market cap, volatilidad, volumen, categoría). Esto elimina el sesgo
+> hacia "las 3 grandes" y permite considerar L1s alternativos, L2s,
+> sectores temáticos (DePIN, RWA, AI) o stablecoins según el perfil.
+> Ver § "Descubrimiento dinámico de candidatos cripto".
 
 ## Cuándo se activa
 
 ## Interacción con technical_skill.md
 
 technical_skill SOLO aplica si el plan incluye compra direccional de
-cripto spot (BTC, ETH, SOL) esperando subida de precio.
+cripto spot esperando subida de precio. Los tickers concretos sobre los
+que puede aplicar se descubren en la § "Descubrimiento dinámico" de
+abajo — NO se asume un universo fijo (BTC/ETH/SOL u otro).
 
 technical_skill NO aplica a:
   - Stablecoin lending (USDC en Binance Simple Earn, Aave)
@@ -23,6 +34,166 @@ Automáticamente cuando:
 - El usuario menciona cripto, staking, yield, DeFi, Binance, Ethereum, Bitcoin
 - El plan necesita una posición de rendimiento en dólares estables
 
+## Descubrimiento dinámico de candidatos cripto (OBLIGATORIO antes de proponer posición direccional)
+
+**Regla dura:** este skill NO asume BTC/ETH/SOL (ni ningún otro token)
+como el universo direccional por defecto. Antes de proponer cualquier
+posición direccional cripto (spot en eToro/Binance, o futures Binance),
+el agente **descubre** candidatos vía:
+
+  - `tradingview.screen_crypto` — para exposure direccional a tokens
+    mayores (Top N por market cap + filtros de perfil).
+  - `defillama.get_pools` — para posiciones de yield / staking /
+    stablecoin lending (el "universo" ahí son pools, no tokens).
+
+### Cuándo este paso es obligatorio
+```
+APLICA (ejecutar screener):
+  - Plan incluye "comprar cripto spot" (eToro o Binance) con tesis
+    direccional de precio.
+  - Plan incluye Futures Binance (Nivel 6) con exposición direccional.
+  - Usuario pide "qué cripto comprar" sin nombrar el token.
+
+NO APLICA (saltar screener):
+  - Stablecoin lending puro (USDC/USDT en Binance Earn, Aave).
+    → ir directo a `defillama.get_pools` filtrando por stablecoins.
+  - Staking de un token ya en custodia del usuario (ej. "tengo ETH
+    desde hace 2 años, ¿dónde lo stakeo?").
+    → no hay decisión de "qué comprar", solo "dónde custodiar".
+  - Usuario pidió un token específico por nombre
+    ("¿qué hago con mis SOL?") → ir directo al gate eToro sobre ese
+    symbol, sin screener.
+```
+
+### Perfiles por características (NO por nombres de token)
+
+```
+PERFIL CRIPTO CONSERVADOR (preservación + exposición mínima direccional)
+  Objetivo: exposición a cripto con activos de la máxima liquidez y
+  menor vol relativa dentro del asset class.
+  Filtros screen_crypto:
+    - market_cap_basic > 100_000_000_000    (Top ~3-5 por mcap, >$100B)
+    - volume           > 1_000_000_000      (>$1B vol 24h, liquidez alta)
+    - Volatility.M     < 8                  (vol mensual < 8%, bajo para cripto)
+  Orden: sort_by="market_cap_basic", sort_order="desc"
+  Límite: 5 candidatos
+
+PERFIL CRIPTO MODERADO (L1s establecidos + narrativas mayores)
+  Objetivo: core direccional con L1s y L2s con ecosistema probado.
+  Filtros screen_crypto:
+    - market_cap_basic > 10_000_000_000     (>$10B, evita micro-caps)
+    - volume           > 200_000_000        (>$200M vol 24h)
+    - Volatility.M     in [6, 15]           (vol mensual 6-15%)
+    - Perf.3M          > -0.40              (no en drawdown catastrófico)
+  Orden: sort_by="market_cap_basic", sort_order="desc"
+  Límite: 15 candidatos
+
+PERFIL CRIPTO AGRESIVO (momentum + narrativas emergentes)
+  Objetivo: movimiento fuerte reciente con liquidez suficiente para
+  entrar/salir sin slippage masivo.
+  Filtros screen_crypto:
+    - market_cap_basic > 1_000_000_000      (>$1B, evita memecoins puros)
+    - volume           > 100_000_000        (>$100M vol 24h)
+    - Volatility.M     > 10                 (vol mensual > 10%)
+    - Perf.1M          > 0                  (momentum mensual positivo)
+  Orden: sort_by="Perf.1M", sort_order="desc"
+  Límite: 20 candidatos
+```
+
+> **Nota sobre unidades:** `Volatility.M` en crypto es percent mensual
+> (ej. `10` = 10% mensual, ~35% anualizada). Para convertir a vol anual
+> aproximada: `σ_anual ≈ Volatility.M/100 × sqrt(12)`.
+>
+> **Campos disponibles en `screen_crypto`** (validados contra
+> `tradingview.list_fields(asset_type="crypto")`): `close`, `change`,
+> `volume`, `Perf.W`, `Perf.1M`, `Perf.3M`, `Perf.Y`, `RSI`, `ATR`,
+> `Volatility.M`, `market_cap_basic`. **No hay** campos de fundamentals
+> tradicionales (P/E, dividend_yield) — el screener cripto es mucho más
+> simple que el de stocks.
+
+### Protocolo de descubrimiento (4 pasos)
+
+```
+PASO 1 — Mapear perfil del usuario → filtros cripto
+  Leer el perfil del usuario (riesgo_general, verticales_activos, tesis
+  de cripto si la declaró). Elegir el bloque de filtros
+  (CONSERVADOR | MODERADO | AGRESIVO). Si el usuario pidió una narrativa
+  específica ("quiero L2s" / "DePIN" / "AI") añadir esa restricción
+  manualmente sobre los resultados — `screen_crypto` no tiene campo
+  "sector" o "narrative", el filtrado narrativo se hace después por
+  lista de symbols conocidos.
+
+PASO 2 — Llamar al screener
+  tradingview.screen_crypto(
+    filters=[...bloque del perfil...],
+    columns=["name", "close", "market_cap_basic", "volume",
+             "Volatility.M", "Perf.1M", "Perf.3M", "Perf.Y", "RSI"],
+    sort_by=...,
+    sort_order="desc",
+    limit=15-20
+  )
+
+  Si el screener devuelve < 5 candidatos → relajar UN filtro a la vez
+  (en este orden: Perf.3M → Perf.1M → volume). Loguear al usuario qué
+  filtro se relajó y por qué.
+
+PASO 3 — Complemento con DeFiLlama (si aplica)
+  Si la posición es de yield/staking (no direccional puro):
+    defillama.get_pools(...)  filtrar por:
+      - chain en las redes aceptables para el perfil (ver § "Decisión
+        de red automática" abajo)
+      - tvlUsd > 100_000_000  (ver § "Validación de seguridad")
+      - apy en rangos sensatos para el perfil (ver § "APY sospechoso")
+    Los pools devueltos son el universo para posiciones de yield; los
+    tokens subyacentes de esos pools son los candidatos para spot si
+    se necesita comprarlos (en cuyo caso sí pasan el screener arriba
+    para validar liquidez).
+
+PASO 4 — Gate eToro sobre TODOS los candidatos (solo si se opera vía eToro)
+  Ejecutar el gate de disponibilidad eToro (sección de abajo) sobre
+  los N candidatos que sobrevivieron al PASO 2 — NO solo sobre los 2-3
+  que el agente "ya eligió". Solo después de que el gate filtre a
+  operables, el agente reduce a los 2-3 finales aplicando:
+    - R:R técnico (via technical_skill.md si la posición es direccional)
+    - correlación entre sí (todos los majors cripto corren alto β contra
+      BTC; proponer 3 L1s en vez de diversificar es trampa)
+    - match con la tesis declarada del usuario
+
+  Si el plan es nativo Binance (no eToro), saltar el gate; el universo
+  operable en Binance es mucho más amplio y el filtro de liquidez ya
+  lo hizo el screener (volume > umbral).
+```
+
+### Qué hacer si el screener falla
+
+Prioridad de fallback (en este orden):
+  1. Reintentar con filtros mínimos:
+     `tradingview.screen_crypto(filters=[{market_cap_basic > 10_000_000_000}], sort_by="market_cap_basic", limit=15)`
+     — esto devuelve los top ~15 por mcap sin más condicionales.
+  2. Si también falla, usar `defillama.get_pools` como fuente alternativa
+     para el universo (los tokens subyacentes de los pools top por TVL
+     son un proxy razonable del top cripto por relevancia real).
+  3. Si **ambas** caen: NO caer a una lista hardcoded tipo "BTC, ETH,
+     SOL". Informar al usuario literal:
+     > "Los screeners de cripto (TradingView y DeFiLlama) no están
+     > respondiendo ahora. Puedo trabajar con tokens que tú me des
+     > explícitamente, o esperar y reintentar en unos minutos."
+
+### Por qué esta regla (para cripto específicamente)
+
+BTC, ETH y SOL son activos reales y de primer nivel — el problema no es
+incluirlos, es **asumirlos por defecto**. Los tres son casi perfectamente
+correlacionados en ciclos risk-off (β > 0.85 entre sí durante
+capitulaciones), así que un "portafolio de tres" concentrado en BTC/ETH/SOL
+da **menos diversificación de la que aparenta**. Descubrir en vivo permite
+detectar:
+  - Una narrativa fresca (DePIN, RWA, AI infra) que el screener eleva
+    por Perf.3M y que está fuera de los tres majors.
+  - Un L1 alternativo (APT, SUI, SEI, TON) con mcap suficiente para
+    pasar el filtro de liquidez del perfil moderado.
+  - Que ETH específicamente está en drawdown y falla un filtro
+    `Perf.3M > -0.40` — dato accionable que el usuario necesita ver.
+
 ## 🚪 Gate de disponibilidad eToro (para cripto spot en eToro)
 
 **Cuándo aplica:** solo si el plan propone **comprar cripto vía eToro**
@@ -30,15 +201,16 @@ Automáticamente cuando:
 
 eToro tiene restricciones fuertes de cripto por jurisdicción: desde
 Colombia, muchos tokens listados en otras regiones **no son operables**.
-Antes de sugerir comprar BTC/ETH/SOL/cualquier token en eToro, pasar
-el gate.
+Antes de sugerir comprar cualquier token en eToro, pasar el gate sobre
+**cada candidato** que devolvió el descubrimiento dinámico (ver sección
+de abajo).
 
 ### Protocolo
 ```
-POR CADA token que se vaya a operar EN eToro:
+POR CADA token candidato (proveniente del descubrimiento dinámico):
 
   etoro-server.search_instruments(
-    query="<SYMBOL>",        # ej. "BTC", "ETH", "SOL"
+    query="<SYMBOL>",        # el symbol devuelto por el screener
     search_by="internalSymbolFull",
     page_size=5
   )
@@ -218,21 +390,52 @@ SI APY > 100%:
   > momentos de euforia."
 
 ## Cálculos obligatorios por posición
-0. Si se opera en eToro → **Gate eToro** (arriba) antes de seguir
-1. 🧭 Si la posición es cripto spot direccional (no stablecoin/staking):
-     → technical_skill.md para entrada/SL/TP sobre el OHLC de CoinGecko.
-     → Si la posición NO es direccional (USDC lending, ETH staking en
-       Lido, LP), saltar este paso y documentarlo.
-2. `calculate_scenarios` con APY y volatilidad del activo.
-     → Si es **Futures Binance (Nivel 6)**: pasar `funding_rate_daily_pct`
-       según la regla del Nivel 6 (NO usar monthly_cost_usd para funding;
-       eso es solo para fees de trading y overnight CFDs).
-     → Si es **spot / staking / Simple Earn / LP**:
-       `funding_rate_daily_pct=0.0` (no aplica; solo futures perpetuos).
-     → `dividend_withholding_pct=0.0` en todas las posiciones DeFi (cripto
-       no paga dividendos; staking rewards no son dividendos fiscales
-       retenidos en origen).
-3. `calculate_risk_score` — para stablecoins: vol=0.01, dd=-0.02. Para ETH: vol=0.15, dd=-0.35
+
+```
+AL INICIO DE LA SESIÓN (una sola vez, antes del loop por posición):
+
+  0'. 🔭 Descubrimiento dinámico (si la posición es direccional o el
+      usuario pregunta "qué cripto comprar"):
+      tradingview.screen_crypto(filters=<según perfil>, limit=15-20)
+      + si aplica: defillama.get_pools(...)
+      → ver § "Descubrimiento dinámico de candidatos cripto" para los
+        filtros exactos por perfil.
+      → si el usuario nombró explícitamente un token, saltar este paso
+        pero registrarlo: "usuario pidió SOL específicamente,
+        screener omitido".
+      → si la posición es stablecoin lending puro o staking de tokens
+        ya en custodia, saltar este paso (documentar motivo).
+
+POR CADA posición candidata:
+
+  0. Si se opera en eToro → Gate eToro (arriba) antes de seguir.
+     → ejecutar en BATCH sobre todos los N candidatos del paso 0'.
+  1. 🧭 Si la posición es cripto spot direccional (no stablecoin/staking):
+       → technical_skill.md para entrada/SL/TP sobre el OHLC de CoinGecko.
+       → Si la posición NO es direccional (USDC lending, ETH staking en
+         Lido, LP), saltar este paso y documentarlo.
+  2. `calculate_scenarios` con APY y volatilidad del activo.
+       → Si es **Futures Binance (Nivel 6)**: pasar `funding_rate_daily_pct`
+         según la regla del Nivel 6 (NO usar monthly_cost_usd para funding;
+         eso es solo para fees de trading y overnight CFDs).
+       → Si es **spot / staking / Simple Earn / LP**:
+         `funding_rate_daily_pct=0.0` (no aplica; solo futures perpetuos).
+       → `dividend_withholding_pct=0.0` en todas las posiciones DeFi (cripto
+         no paga dividendos; staking rewards no son dividendos fiscales
+         retenidos en origen).
+  3. `calculate_risk_score` — para stablecoins: vol=0.01, dd=-0.02. Para
+     tokens direccionales: usar `Volatility.M` del screener (convertido
+     a anual con `/100 × sqrt(12)`) y drawdown_12m calculado desde el
+     histórico de CoinGecko o de `Perf.Y` como proxy conservador.
+```
+
+**Invariante universo:** ningún token llega al usuario como recomendación
+direccional sin haber pasado por el paso 0' (descubrimiento) o haber sido
+pedido explícitamente por nombre. Si el agente encuentra que recomienda
+siempre los mismos 3 tokens (BTC/ETH/SOL o cualquier otro trío) sesión
+tras sesión, eso es señal de que el screener no se está ejecutando
+realmente o los filtros son demasiado estrechos — revisar y ampliar el
+perfil antes de recomendar.
 
 ## Cronograma (auto-generar según nivel)
 ```
