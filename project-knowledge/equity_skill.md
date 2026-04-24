@@ -1,5 +1,14 @@
-# Skill: Acciones y ETFs — v8.1
+# Skill: Acciones y ETFs — v9.0
 
+> **Changelog v9.0:** eliminado el universo cerrado de tickers (listas fijas
+> por riesgo tipo `ALTO: NVDA, TSLA, AMD…`). Los candidatos ahora se
+> **descubren dinámicamente** vía `tradingview.screen_stocks` con filtros
+> derivados del **perfil** del usuario (volatilidad, beta, market cap,
+> liquidez, sector). Esto elimina el sesgo hacia NVDA y otros tickers
+> "favoritos" que estaban hardcoded, y garantiza que cada sesión se trabaje
+> con el universo real del mercado en ese momento. Ver § "Descubrimiento
+> dinámico de candidatos".
+>
 > **Changelog v8.1:** la tabla de volatilidades pasa de "valores exactos
 > obligatorios" a **fallback documentado**. Fuente primaria ahora es el
 > cálculo en vivo desde Alpha Vantage (`TIME_SERIES_DAILY`, últimos 30 días
@@ -7,18 +16,147 @@
 > solo se usa cuando la tool falla, con motivo logueado al usuario.
 > Ver § "Volatilidad y max drawdown: fuente primaria vs. fallback".
 
-## Activos por riesgo
-```
-ALTO: NVDA, TSLA, AMD, COIN, MSTR, PLTR, SOFI, RIOT, MARA, SNOW, NOW, INTU, CRM
-  ETFs apalancados: TQQQ, SOXL (solo momentum, NO hold >3 meses)
-  PROHIBIDO: VOO, VT, SCHD, QQQ sin apalancamiento
+## Descubrimiento dinámico de candidatos (OBLIGATORIO antes de cualquier análisis)
 
-MODERADO: QQQ, XLK, AAPL, MSFT, GOOGL, AMZN
-BAJO: VOO, VT, SCHD
+**Regla dura:** este skill NO mantiene listas fijas de tickers por riesgo.
+El universo de candidatos se genera en vivo vía `tradingview.screen_stocks`
+usando filtros derivados del **perfil** del usuario. No hay shortcuts tipo
+"NVDA porque siempre sale" ni "VOO porque es el default conservador".
+
+### Por qué esta regla
+
+Las listas fijas de tickers crean tres problemas:
+  1. **Sesgo de autor**: los tickers que aparecen son los que el diseñador
+     del skill conocía al momento de escribirlo (ej. NVDA post-2023). El
+     mercado rota; la lista no.
+  2. **Universo cerrado**: un candidato que cumple el perfil del usuario
+     pero no está en la lista nunca se considera. El usuario pierde
+     oportunidades.
+  3. **Falsa diversificación**: 3 de 5 "tickers ALTO" pueden ser del mismo
+     sector (semiconductores/IA). Descubrir en vivo permite exigir
+     diversificación sectorial explícita en los filtros.
+
+### Perfiles por características (NO por tickers)
+
+Cada perfil de riesgo se define por rangos de métricas observables, no por
+nombres de empresa. El agente mapea el perfil del usuario → filtros de
+screener → candidatos.
+
+```
+PERFIL RIESGO ALTO (growth / momentum / convicción con leverage)
+  Objetivo: activos con movimiento suficiente para justificar CFD 2x.
+  Filtros screen_stocks:
+    - Volatility.M            > 6       (vol mensual > 6%, ~35% anualizada)
+    - market_cap_basic        > 10_000_000_000   (>$10B, evita micro-caps)
+    - average_volume_30d_calc > 5_000_000        (>5M sh/día, liquidez)
+    - Perf.3M                 > 0       (momentum positivo 3m, opcional)
+    - exchange in [NASDAQ, NYSE]
+    - is_primary = true
+    - typespecs has ["common"]          (evita ADRs sin liquidez, warrants)
+  Ordenamiento sugerido: sort_by="Volatility.M", sort_order="desc"
+  Límite: 20 candidatos brutos (luego se filtra por gate eToro)
+
+PERFIL RIESGO MODERADO (core growth, large cap tech/consumer)
+  Objetivo: exposición a crecimiento sin volatilidad extrema.
+  Filtros screen_stocks:
+    - Volatility.M            in [3, 6]          (vol mensual 3-6%)
+    - market_cap_basic        > 50_000_000_000   (>$50B, blue-chip)
+    - beta_1_year             in [0.8, 1.5]
+    - average_volume_30d_calc > 3_000_000
+    - Perf.Y                  > -0.15            (no en drawdown severo)
+    - exchange in [NASDAQ, NYSE]
+    - is_primary = true
+  Ordenamiento: sort_by="market_cap_basic", sort_order="desc"
+  Límite: 15-20 candidatos
+
+PERFIL RIESGO BAJO (income / preservación / ETFs amplios)
+  Objetivo: yield sostenible + baja volatilidad + baja correlación con
+  la acción individual.
+  Filtros screen_stocks:
+    - dividend_yield_recent   > 2       (>2% yield)
+    - beta_1_year             < 1
+    - Volatility.M            < 3       (vol mensual < 3%)
+    - market_cap_basic        > 20_000_000_000
+    - continuous_dividend_payout > 5    (≥5 años pagando dividendo)
+    - exchange in [NASDAQ, NYSE]
+    - is_primary = true
+  Ordenamiento: sort_by="dividend_yield_recent", sort_order="desc"
+  Límite: 15 candidatos
 ```
 
-> ⚠️ Esta lista es el **universo teórico**. Ningún ticker se presenta al
-> usuario hasta pasar el **Gate de disponibilidad eToro** (ver abajo).
+> **Nota sobre unidades de `Volatility.M`:** TradingView expone este campo
+> como percent (ej. `6` = 6% mensual). Para convertir a volatilidad anual
+> aproximada, usar `σ_anual ≈ Volatility.M/100 × sqrt(12)`. Un filtro
+> `Volatility.M > 6` captura activos con σ_anual ≳ 0.21; `> 10` captura
+> σ_anual ≳ 0.35. Ajustar el umbral si el usuario tiene un sesgo
+> específico en su perfil documentado.
+
+### Protocolo de descubrimiento (4 pasos)
+
+```
+PASO 1 — Mapear perfil del usuario → filtros
+  Leer el perfil del usuario (riesgo_general, verticales_activos, sesgos
+  declarados). Elegir el bloque de filtros de arriba (ALTO | MODERADO |
+  BAJO). Si el usuario pidió algo específico en la sesión ("quiero
+  semiconductores") añadir filtro `sector equal "Electronic Technology"`
+  o equivalente.
+
+PASO 2 — Llamar al screener
+  tradingview.screen_stocks(
+    filters=[...bloque del perfil...],
+    columns=["name", "close", "market_cap_basic", "Volatility.M",
+             "beta_1_year", "dividend_yield_recent", "Perf.3M",
+             "Perf.Y", "sector", "average_volume_30d_calc",
+             "RSI", "SMA50", "SMA200"],
+    sort_by=...,
+    sort_order="desc",
+    limit=20,
+    markets=["america"]
+  )
+
+  Si el screener devuelve < 5 candidatos → relajar UN filtro a la vez
+  (en este orden: average_volume_30d_calc → Perf.3M → market_cap_basic).
+  Loguear al usuario qué filtro se relajó y por qué.
+
+PASO 3 — Diversificación sectorial (pre-gate)
+  Sobre los N candidatos brutos, antes del gate eToro:
+    - Agrupar por `sector`.
+    - Si un sector concentra > 60% de los candidatos (ej. 14 de 20 son
+      "Electronic Technology"), recortar a máximo 5 por sector antes
+      de seguir. Esto evita pasar el gate solo para acabar recomendando
+      3 semiconductores.
+  Si el usuario pidió explícitamente un sector, este paso se omite
+  (pero se loguea).
+
+PASO 4 — Gate eToro sobre TODOS los candidatos
+  Ejecutar el gate de disponibilidad eToro (sección más abajo) sobre
+  los N candidatos que sobrevivieron al PASO 3 — NO solo sobre los 3
+  que el agente "ya eligió". Solo después de que el gate filtre a
+  operables, el agente reduce a los 3 finales a presentar al usuario
+  aplicando:
+    - R:R técnico (via technical_skill.md)
+    - correlación entre sí (via calculate_correlation)
+    - match con sesgos/tesis del usuario
+```
+
+> ⚠️ Los candidatos que salen del screener son el **universo dinámico**
+> de la sesión. Ningún ticker se presenta al usuario hasta pasar el
+> **Gate de disponibilidad eToro** (ver sección dedicada abajo).
+
+### Qué hacer si el screener falla
+
+Prioridad de fallback (en este orden):
+  1. Reintentar con el preset equivalente:
+     - ALTO → `tradingview.get_preset("momentum_stocks")` o
+       `"growth_stocks"`, luego `screen_stocks` con esos filtros.
+     - MODERADO → `get_preset("quality_growth_screener")`.
+     - BAJO → `get_preset("dividend_stocks")` o `"quality_stocks"`.
+  2. Si los presets también fallan: NO caer a una lista hardcoded.
+     Informar al usuario literal:
+     > "El screener de TradingView no está respondiendo ahora. Puedo
+     > trabajar con tickers que tú me des explícitamente (3-6 símbolos),
+     > o esperar y reintentar en unos minutos."
+     Esto es preferible a inventar una lista sesgada sobre la marcha.
 
 ## Apalancamiento eToro CFDs
 ```
@@ -26,6 +164,12 @@ Riesgo ALTO → CFD 2x en acciones de convicción
   NUNCA 5x con capital < $1000
   Ganancia +20% con 2x = +40% real
   Pérdida -50% con 2x = LIQUIDACIÓN TOTAL
+
+ETFs apalancados (TQQQ, SOXL, etc.): solo si el screener los devuelve
+  Y el usuario explícitamente pidió momentum con hold < 3 meses.
+  NO son el default para perfil ALTO.
+PROHIBIDO para perfil ALTO: ETFs amplios sin apalancamiento (VOO, VT,
+  SCHD, QQQ sin leverage) — no ofrecen convicción direccional suficiente.
 ```
 
 ## Volatilidad y max drawdown: fuente primaria vs. fallback
@@ -33,9 +177,9 @@ Riesgo ALTO → CFD 2x en acciones de convicción
 **Regla dura (v8.1):** el valor de `volatility_30d` y `max_drawdown_12m`
 que se pasa a `calculate_risk_score` SIEMPRE se prefiere calculado en
 vivo desde Alpha Vantage sobre los últimos 30 días (vol) y últimos
-12 meses (drawdown). La tabla de abajo es **solo fallback documentado**
-cuando la tool falla, devuelve rate-limit, o no tiene data suficiente
-para el ticker.
+12 meses (drawdown). El fallback por categoría (sección de abajo) es
+**solo fallback documentado** cuando la tool falla, devuelve rate-limit,
+o no tiene data suficiente para el ticker.
 
 ### Protocolo de cálculo (fuente primaria — Alpha Vantage)
 
@@ -78,52 +222,62 @@ Criterios para caer a fallback:
     (claro síntoma de data corrupta).
 ```
 
-### Tabla de fallback (usar SOLO si falla el cálculo en vivo)
+### Fallback por perfil/sector (usar SOLO si falla el cálculo en vivo)
 
 ```
-⚠️ ÚLTIMA VERIFICACIÓN: abril 2026. Estos valores envejecen;
-trátalos como referencia de emergencia, no como verdad.
+⚠️ Estos rangos son **genéricos por categoría**, no listas de tickers
+hardcoded. Se usan únicamente cuando Alpha Vantage falla y TradingView
+tampoco tiene `Volatility.M` disponible para el ticker descubierto por
+el screener. Los rangos son anclas conservadoras, no valores exactos.
 
-| Ticker | volatility_30d | max_drawdown_12m | Notas                    |
-|--------|---------------|------------------|--------------------------|
-| NVDA   | 0.35          | -0.45            | Semiconductores/IA       |
-| TSLA   | 0.45          | -0.55            | Muy volátil, polarizante |
-| AMD    | 0.30          | -0.40            | Semiconductores          |
-| COIN   | 0.50          | -0.60            | Proxy cripto, beta ~3x   |
-| MSTR   | 0.55          | -0.65            | Proxy BTC apalancado     |
-| PLTR   | 0.35          | -0.40            | IA gobierno/empresa      |
-| SNOW   | 0.35          | -0.45            | SaaS cloud data          |
-| NOW    | 0.30          | -0.40            | SaaS enterprise          |
-| RIOT   | 0.55          | -0.65            | Minero BTC               |
-| MARA   | 0.55          | -0.65            | Minero BTC               |
-| SOFI   | 0.40          | -0.50            | Fintech                  |
-| INTU   | 0.25          | -0.35            | SaaS finanzas            |
-| CRM    | 0.25          | -0.35            | SaaS enterprise          |
-| AAPL   | 0.12          | -0.20            | Blue-chip                |
-| MSFT   | 0.12          | -0.18            | Blue-chip                |
-| GOOGL  | 0.15          | -0.22            | Blue-chip                |
-| AMZN   | 0.18          | -0.25            | E-commerce + cloud       |
-| QQQ    | 0.12          | -0.20            | ETF Nasdaq 100           |
-| VOO    | 0.08          | -0.15            | ETF S&P 500              |
+| Categoría del activo                      | volatility_30d | max_drawdown_12m |
+|-------------------------------------------|---------------|------------------|
+| ETF amplio mercado (S&P 500, MSCI World)  | 0.10          | -0.15            |
+| ETF sectorial large-cap (QQQ, XLK, XLF)   | 0.15          | -0.22            |
+| Blue-chip large-cap estable (mega-cap)    | 0.15          | -0.22            |
+| Blue-chip large-cap con beta>1            | 0.20          | -0.28            |
+| Growth large-cap (SaaS, consumer tech)    | 0.30          | -0.40            |
+| Growth mid-cap / semiconductores          | 0.35          | -0.45            |
+| High-beta / fintech / discretionary alto  | 0.40          | -0.50            |
+| Proxy cripto (mineros, exchanges, BTC-related) | 0.55     | -0.65            |
+| ETF apalancado 2x-3x                      | 0.60          | -0.70            |
 
-Cuándo usar esta tabla:
-  1. La tool Alpha Vantage falló (ver "Criterios para caer a fallback")
-     → usar el valor de la tabla Y loguear explícitamente:
-       "volatility_30d=0.XX (FALLBACK tabla equity_skill, Alpha Vantage
-        no disponible: <motivo>)"
-  2. El ticker NO está en esta tabla Y Alpha Vantage falló
-     → usar como proxy el activo más similar de la tabla (mismo sector
-       + beta similar) y loguear el proxy:
-       "volatility_30d=0.XX (FALLBACK proxy de <TICKER_SIMILAR>,
-        Alpha Vantage no disponible)"
-  3. Si NADA de lo anterior aplica (ticker nuevo, sin proxy claro,
-     Alpha Vantage caído) → NO inventar: informar al usuario
+Cómo clasificar un ticker en una categoría (sin lista fija):
+  1. Obtener del screener (o de `yfinance_get_ticker_info`):
+       sector, market_cap_basic, beta_1_year, Volatility.M (si la hay).
+  2. Mapear con reglas simples:
+       - market_cap > $200B y beta < 1.1 → "Blue-chip estable".
+       - market_cap > $50B y beta in [1.1, 1.5] → "Blue-chip con beta>1".
+       - sector "Electronic Technology" y market_cap 10-100B → "Growth
+         mid-cap / semis".
+       - industry "Information Technology Services" o "Packaged Software"
+         y market_cap > 10B → "Growth large-cap SaaS".
+       - Nombre del instrumento contiene "2X"/"3X"/"Ultra"/"Bull" → ETF
+         apalancado.
+       - Ticker aparece en industry "Investment Trusts/Mutual Funds" o
+         "Finance/Rental/Leasing" con "Bitcoin"/"Crypto" en el nombre
+         → "Proxy cripto".
+  3. Si no encaja claro en ninguna, usar la categoría inmediatamente más
+     conservadora (mayor vol) para no subestimar el riesgo.
+
+Cuándo usar este fallback:
+  1. Alpha Vantage falló Y TradingView no devolvió `Volatility.M` válido
+     para el ticker:
+       → clasificar el ticker en una categoría (pasos 1-3 de arriba)
+       → usar el valor de la categoría Y loguear explícitamente:
+         "volatility_30d=0.XX (FALLBACK categoría '<Growth large-cap SaaS>',
+          Alpha Vantage y Volatility.M no disponibles: <motivo>)"
+  2. Alpha Vantage falló PERO TradingView sí devolvió `Volatility.M`:
+       → usar `Volatility.M/100 × sqrt(12)` como aproximación de
+         `volatility_30d` anualizada y loguear:
+         "volatility_30d=0.XX (FALLBACK derivado de Volatility.M de
+          TradingView, Alpha Vantage no disponible)"
+  3. Si ninguna fuente responde → NO inventar: informar al usuario
      "no es posible calcular risk score confiable para <TICKER>
       ahora mismo" y descartar el ticker para esta sesión.
 
-La tabla NUNCA se usa si la tool devolvió un número válido, aunque
-el número de la tool difiera del de la tabla. El número real del
-mercado manda.
+El fallback NUNCA se usa si la tool devolvió un número válido. El número
+real del mercado manda.
 ```
 
 ## Cómo llamar calculate_risk_score (ejemplo)
@@ -142,19 +296,22 @@ Para NOW con CFD 2x, peso 35% (cálculo en vivo, caso normal):
   Resultado esperado: ~7.5-8.5 "high" (leverage floor del server.py)
 
 Para NOW con CFD 2x (modo fallback, si Alpha Vantage cayó):
+  # Clasificación: sector=Technology Services, market_cap ~$170B, beta~1.1
+  #   → categoría "Growth large-cap SaaS" → vol≈0.30, dd≈-0.40
   calculate_risk_score(
-    volatility_30d=0.30,      ← FALLBACK tabla equity_skill (loguear)
-    max_drawdown_12m=-0.40,   ← FALLBACK tabla equity_skill (loguear)
+    volatility_30d=0.30,      ← FALLBACK categoría "Growth large-cap SaaS" (loguear)
+    max_drawdown_12m=-0.40,   ← FALLBACK misma categoría (loguear)
     liquidity="instant",
     platform_regulated=true,
     weight_in_portfolio_pct=35,
     leverage=2.0
   )
 
-Para AAPL spot, peso 20%:
+Para un ETF S&P 500 spot, peso 20% (ej. ticker descubierto por screener
+con filtros de perfil BAJO):
   calculate_risk_score(
     volatility_30d=0.12,      ← calculada en vivo si AV responde,
-    max_drawdown_12m=-0.20,   ←  si no, fallback tabla
+    max_drawdown_12m=-0.20,   ←  si no, fallback categoría "ETF amplio mercado"
     liquidity="instant",
     platform_regulated=true,
     weight_in_portfolio_pct=20,
@@ -272,17 +429,30 @@ Si las 3 pasan:
 Si alguna falla (o el ticker no aparece en results):
   → DESCARTAR el ticker para esta sesión
   → registrar el motivo: "not_listed" | "not_tradable" | "buy_disabled" | "wrong_type"
-  → buscar reemplazo equivalente (mismo sector + volatilidad similar
-    de la tabla de arriba) y repetir el gate con ese
-  → si tras 2 intentos ningún candidato del sector pasa el gate,
-    informar al usuario explícitamente antes de seguir
+  → NO buscar reemplazo "a ojo": el reemplazo sale de la lista de
+    candidatos que ya devolvió el screener (siguiente ticker con perfil
+    similar en sector y volatilidad). Si se agota la lista de candidatos
+    operables en un sector, pasar al siguiente sector del screener.
+  → Si tras procesar todos los candidatos del screener no hay
+    suficientes operables (< 3), informar al usuario explícitamente
+    antes de seguir y ofrecer relajar un filtro del perfil.
 ```
 
 ### Batch al inicio del análisis
-Si vas a evaluar una lista de N tickers (ej. todo el grupo ALTO),
-ejecuta el gate para todos **antes** de llamar a Alpha Vantage / Yahoo
-/ TradingView. Evita trabajar datos fundamentales de activos que luego
-vas a descartar.
+Sobre los N candidatos que devolvió `tradingview.screen_stocks` (después
+de la diversificación sectorial), ejecuta el gate eToro para **todos**
+antes de llamar a Alpha Vantage / Yahoo / TradingView para datos
+fundamentales. Evita trabajar datos detallados sobre activos que luego
+vas a descartar por no estar operables.
+
+Orden recomendado en una sesión típica:
+```
+  screen_stocks (20 candidatos)
+    → diversificación sectorial (≤ 5 por sector → p.ej. 15 candidatos)
+    → gate eToro batch sobre los 15
+    → los operables (ej. 11 pasan) → análisis fundamental/técnico
+    → reducir a 3 finales por R:R, correlación y match con tesis
+```
 
 ### Qué decirle al usuario cuando se descarta un ticker
 No ocultes la restricción — es información útil:
@@ -395,18 +565,33 @@ Payload real de `yfinance_get_ticker_info("CRM")`:
 
 ## Tool calls obligatorios
 ```
-POR CADA acción candidata (en este ORDEN):
+AL INICIO DE LA SESIÓN (una sola vez, antes del loop por candidato):
+
+  0'. 🔭 Descubrimiento dinámico (bloqueante):
+      tradingview.screen_stocks(filters=<según perfil del usuario>, limit=15-20)
+      → aplicar diversificación sectorial (≤ 5 por sector salvo petición
+        explícita del usuario)
+      → si el screener falla: intentar presets equivalentes
+        (get_preset → screen_stocks); si también fallan, NO inventar
+        lista — pedir tickers al usuario o reintentar luego.
+      → resultado: lista de N candidatos brutos para esta sesión.
+
+POR CADA acción candidata de la lista anterior (en este ORDEN):
 
   0. 🚪 GATE eToro (bloqueante):
      etoro-server.search_instruments(query="<TICKER>", ...)
      → si no pasa, DESCARTAR y no seguir con esta candidata
+     → recomendado: ejecutar este gate en BATCH sobre todos los N
+       candidatos antes de entrar al paso 1, para no gastar API
+       de Alpha Vantage en activos no operables.
 
   1. Alpha Vantage → precio, RSI, MACD, SMA50, SMA200, TIME_SERIES_DAILY
      → Calcular EN VIVO volatility_30d y max_drawdown_12m desde la
        serie diaria (ver § "Volatilidad y max drawdown: fuente primaria
        vs. fallback" arriba para la fórmula exacta).
      → Si la tool falla / rate-limit / data insuficiente:
-         usar el valor de la tabla de fallback y LOGUEAR
+         usar el fallback por categoría (ver § "Fallback por perfil/sector")
+         clasificando el ticker según sector + market_cap + beta. LOGUEAR
          explícitamente el motivo en la sección de datos del plan.
      → Guardar vol_calculada y dd_calculado para pasos 4 y 5.
   2. Yahoo Finance → yfinance_get_ticker_info(symbol="<TICKER>")
@@ -414,7 +599,9 @@ POR CADA acción candidata (en este ORDEN):
        "Extracción de datos de ticker_info" (earnings + consenso
        analistas + momentum relativo al S&P). No basta con llamar
        la tool; hay que LEER el payload y presentar los campos.
-  3. TradingView → señal técnica
+  3. TradingView → señal técnica (datos ya recolectados en paso 0'
+     si se hizo screening; si no, llamar screen_stocks con filtro
+     puntual para este ticker).
   3.5. 🧭 technical_skill.md (si la posición es direccional):
      → Pasa a este skill los datos recolectados en los pasos 1-3
        (OHLC, RSI, MACD, SMA50, SMA200, señal TradingView).
@@ -426,7 +613,7 @@ POR CADA acción candidata (en este ORDEN):
        (ej. -10%) que se hubiera considerado.
   4. calculate_risk_score(vol_calculada, dd_calculado, "instant", true, peso, leverage)
      → vol y dd vienen del paso 1 (preferente: cálculo en vivo;
-       fallback: tabla, con motivo logueado).
+       fallback: categoría, con motivo logueado).
   5. calculate_scenarios(
         monto, apy, vol_calculada, passive_bruto, meses, leverage, monthly_cost,
         dividend_withholding_pct=0.30 si US y paga dividendo (else 0.0)
@@ -437,8 +624,10 @@ POR CADA acción candidata (en este ORDEN):
 ```
 
 **Invariante:** los pasos 1-6 nunca se ejecutan sobre un ticker que
-falló el paso 0. Si lo haces, estás quemando llamadas de API en algo
-que el usuario no puede operar.
+falló el paso 0. El paso 0 nunca se ejecuta sobre un ticker que no
+viene del paso 0' (o, excepcionalmente, que el usuario pidió por
+nombre explícito). Si lo haces, estás sesgando el universo con
+"tickers de memoria" del agente.
 
 **Invariante técnico:** si se presenta una acción como "entrada ahora"
 en el plan, los SL y TP de esa posición deben venir de technical_skill.md
@@ -455,7 +644,16 @@ Volver a leer el payload.
 y `calculate_scenarios` como `volatility_30d` debe ser trazable a una
 de estas dos fuentes (en este orden de preferencia):
   1. Cálculo en vivo sobre TIME_SERIES_DAILY de Alpha Vantage (preferido).
-  2. Tabla de fallback documentada en este skill (solo si 1 falló,
-     con el motivo logueado al usuario).
+  2. Fallback por categoría documentado en este skill (solo si 1 falló,
+     con el motivo logueado al usuario; la categoría se deriva de
+     sector + market_cap + beta del ticker, NO de una tabla fija
+     por nombre).
 Si no se puede garantizar ninguna de las dos, descartar el ticker;
 no inventar un número "aproximado".
+
+**Invariante universo:** ningún ticker llega al usuario sin haber pasado
+por el paso 0' (descubrimiento) o haber sido pedido explícitamente por
+nombre. Si el agente encuentra que está recomendando siempre los mismos
+3-4 tickers sesión tras sesión, eso es señal de que el screener no se
+está ejecutando realmente o los filtros son demasiado estrechos —
+revisar y ampliar el perfil antes de recomendar.
