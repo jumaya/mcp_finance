@@ -34,6 +34,68 @@ Antes de buscar traders, el agente debe tener claro:
 Si algo no está claro, el agente **pregunta una sola cosa por mensaje**
 antes de buscar.
 
+#### Paso 1.0 — GATE DURO: mínimo $200 USD por copy trader (PRIMERA VERIFICACIÓN)
+
+**Antes de cualquier otra cosa en este skill** — antes de `get_portfolio`,
+antes de `discover_popular_investors`, antes de rankear — el agente
+verifica que el capital asignado a copy trading alcanza el mínimo
+absoluto de eToro.
+
+**Regla:** eToro exige **USD $200 por cada CopyTrader** (fuente única:
+`platforms_skill §1.3` → `VENUE_MINIMUMS_USD.eToro.copy_trader` en
+`mcp-server/server.py`). Sin ese mínimo, la copia **no se puede abrir**
+en la plataforma aunque el agente la recomiende. Presentar un plan con
+"copy trading: $120" es un fallo crítico: el usuario llega a eToro y
+descubre que no puede ejecutar lo que le propusimos.
+
+**Qué hacer:**
+
+1. Identificar `capital_asignado_a_copy_trading` (el valor del vertical
+   `social` que viene de `allocate_portfolio.allocation_usd["social"]`,
+   o el monto que el usuario declaró explícitamente para copy).
+
+2. Si `capital_asignado_a_copy_trading < 200`:
+   - **NO continuar con este skill.** No llamar `get_portfolio`, no
+     llamar `discover_popular_investors`, no rankear candidatos.
+   - Devolver al orquestador (`system.md`) la señal estructurada:
+     ```json
+     {
+       "skip": true,
+       "reason": "capital < minimum copy trading",
+       "capital_asignado": <monto_usd>,
+       "minimo_requerido": 200,
+       "gap_usd": <200 - monto_usd>,
+       "vertical": "social"
+     }
+     ```
+   - El orquestador es responsable de redistribuir ese capital a otros
+     verticales (equity/defi/reserve) **antes** de llamar a los skills
+     verticales. Este skill no decide cómo se redistribuye.
+
+3. Si `capital_asignado_a_copy_trading >= 200`:
+   - Calcular `num_traders_posibles = floor(capital / 200)`.
+   - Si son 2+ traders y el usuario pidió diversificar, mantener el
+     monto como candidato a repartir. Si son 1 o sale mal repartido,
+     concentrar en 1 copy trader y continuar con los siguientes pasos.
+
+**Por qué este gate va ANTES del Paso 1 completo:** evitar gastar tool
+calls (`get_portfolio`, `discover_popular_investors`,
+`get_user_performance` × N candidatos) cuando el resultado no va a
+poder ejecutarse. El agente **no recorre el flujo entero para
+descubrir al final que el plan es inviable**; aborta temprano y
+devuelve control al orquestador.
+
+**Relación con `platforms_skill`:** `platforms_skill §4`
+(`validate_allocation_minimums`) es la red de seguridad global —
+corre **después** de `allocate_portfolio` y atrapa cualquier
+violación de mínimos en todos los verticales. Este gate del Paso 1.0
+es el equivalente **específico del social_skill**, que se ejecuta al
+**entrar** al skill, no al validar el plan completo. Ambos son
+coherentes por diseño: mismo valor ($200), misma fuente de verdad
+(`VENUE_MINIMUMS_USD`). Si este gate dispara `skip: true` y el
+orquestador redistribuye antes de continuar, `validate_allocation_minimums`
+no debería encontrar la violación de `copy_trader` más adelante.
+
 ### Paso 2 — Ver el portfolio actual del usuario (si hay contexto)
 
 Si el usuario ya tiene cuenta eToro conectada al MCP, llamar
@@ -149,7 +211,10 @@ Antes de que el usuario decida copiar a alguien, el agente **siempre**
 recuerda:
 
 1. Rendimiento pasado no garantiza futuro.
-2. Mínimo recomendado de copy en eToro suele ser $200 USD.
+2. Mínimo **obligatorio** (no "recomendado") de copy en eToro es USD $200
+   por trader. Este mínimo ya fue validado al entrar al skill (Paso 1.0);
+   si el usuario ve este mensaje, significa que el capital asignado ya lo
+   cumple.
 3. Se puede configurar `stopLossPercentage` al abrir el copy (el agente
    sugiere 15-25% según risk score del trader).
 4. El MCP actual es **solo lectura** — el usuario ejecuta la copia él
@@ -160,6 +225,10 @@ recuerda:
 
 ## Qué NO hacer
 
+- ❌ **Continuar el skill cuando `capital_asignado_a_copy_trading < $200`.**
+  No se llama `discover_popular_investors`, no se rankean traders, no se
+  presenta tabla. Se devuelve `{skip: true, reason: 'capital < minimum
+  copy trading'}` al orquestador y se espera que redistribuya el capital.
 - ❌ Sugerir traders sin haber llamado `get_user_performance` para ver
   sus métricas reales.
 - ❌ Usar nombres hardcodeados como referencias definitivas. Son solo

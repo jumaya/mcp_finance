@@ -89,6 +89,63 @@ Mezcla de verticales o pedido global | Combinar skills + risk_rules + plan_templ
 risk_rules.md siempre aplica al final.
 platforms_skill.md aplica siempre que el plan toque eToro o Binance. Se carga en paralelo al skill vertical, no lo reemplaza. Es el dueño de los mínimos por posición, los spreads por asset class, y los flujos de depósito/retiro COP.
 
+Fase 3.5 — Pre-gate de viabilidad por vertical (manejo de `{skip: true}`)
+
+Algunos skills verticales ejecutan un **gate de entrada** ANTES de
+empezar su protocolo, para detectar temprano casos en los que el
+capital asignado a ese vertical no alcanza el mínimo ejecutable en la
+plataforma. Si el gate falla, el skill NO corre y devuelve al
+orquestador una señal estructurada:
+
+```json
+{
+  "skip": true,
+  "reason": "<motivo>",
+  "capital_asignado": <usd>,
+  "minimo_requerido": <usd>,
+  "gap_usd": <usd>,
+  "vertical": "<nombre_vertical>"
+}
+```
+
+**Gates activos actualmente:**
+
+| Skill | Gate | Mínimo | Fuente de verdad |
+|---|---|---|---|
+| `social_skill` §Paso 1.0 | copy trading en eToro | USD $200 por trader | `VENUE_MINIMUMS_USD.eToro.copy_trader` |
+
+**Protocolo del orquestador cuando recibe `{skip: true}`:**
+
+1. **Registrar** el motivo para mencionarlo al usuario en el plan final
+   ("no asignamos X a copy trading porque se necesitan $200 mínimo y el
+   plan solo dejaba $120").
+
+2. **Redistribuir** `capital_asignado` entre los verticales restantes
+   **ANTES** de llamar a los skills verticales correspondientes. Orden
+   de preferencia para la redistribución:
+   - Si el usuario tiene otro vertical direccional activo (equity/defi),
+     sumar el gap a ese vertical respetando los límites de `risk_rules`.
+   - Si no, mover a `reserve` (stablecoin lending / Simple Earn).
+   - Nunca crear un vertical nuevo que el usuario no pidió.
+
+3. **Recalcular `allocate_portfolio`** con la nueva asignación, o
+   ajustar manualmente `allocation_usd` sumando el gap al vertical
+   receptor y restándolo del vertical skipped. Documentar el cambio.
+
+4. **No cargar** el skill que devolvió `skip: true` para esta ejecución.
+   Si el usuario preguntó explícitamente "a quién copio", explicar que
+   su capital no alcanza el mínimo y ofrecer alternativas (aumentar
+   capital, o los otros verticales).
+
+5. Continuar con Fase 4 usando la asignación ajustada.
+
+**Por qué va antes de Fase 4:** ejecutar `allocate_portfolio` → llamar
+skills → descubrir al final en `validate_allocation_minimums` que hay
+que rehacer todo es un desperdicio de tool calls y produce planes
+inconsistentes. El gate de viabilidad vertical es el filtro temprano;
+`validate_allocation_minimums` (Fase 4.5) es la red de seguridad
+global. Ambos se refuerzan.
+
 Fase 4 — Calcular con el MCP propio (no estimar a ojo)
 Nunca muestres números al usuario sin haberlos pasado por una calculadora cuando corresponde:
   Risk score de la sugerencia → calculate_risk_score.
