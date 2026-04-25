@@ -1,5 +1,16 @@
-# Skill: Acciones y ETFs — v9.2
+# Skill: Acciones y ETFs — v9.3
 
+> **Changelog v9.3:** rotación deliberada de tickers en los ejemplos
+> didácticos. Los ejemplos previos repetían NVDA/AAPL/SPY, lo cual no
+> afecta funcionalidad pero entrena al modelo a "anclar" en esos
+> nombres como referencia narrativa. A partir de v9.3 los ejemplos
+> usan un **set rotatorio** (JPM, KO, BAC, LMT, XOM, JNJ, MSFT, V,
+> PG, UNH, DIA, IWM, etc.) cubriendo distintos sectores y verticales.
+> Las menciones a NVDA en las secciones de changelog v9.0/v9.1 se
+> conservan porque están documentando precisamente el **anti-patrón**
+> que se eliminó (no son ejemplos vivos). Ver § "Política de ejemplos"
+> al final del documento.
+>
 > **Changelog v9.2:** el descubrimiento de candidatos ahora **arranca con
 > el preset de TradingView** que `market_intelligence_skill.md §Paso 2`
 > elige según el perfil del usuario, no con filtros propios del skill.
@@ -464,12 +475,13 @@ retención en origen** — ver `platforms_skill.md §1.5`.
 
 ```
 Regla:
-  - Si el activo es US (stock, ETF domiciliado en US: SPY, QQQ, VOO, VTI,
-    DIA, IWM, etc.) Y paga dividendo:
+  - Si el activo es US (stock, ETF domiciliado en US: DIA, IWM, IVV, VTI,
+    SCHD, RSP, etc.) Y paga dividendo:
        dividend_withholding_pct = 0.30
 
-  - Si el activo es US pero NO paga dividendo (TSLA, GOOGL, BRK.B, AMZN,
-    muchos de tech growth): el parámetro es irrelevante, dejar en 0.0.
+  - Si el activo es US pero NO paga dividendo (ej. growth puro o no payer
+    histórico — verificar con yfinance `dividendYield` antes de asumir):
+    el parámetro es irrelevante, dejar en 0.0.
 
   - Si el activo es no-US (ETFs UCITS irlandeses, acciones UK, DE, HK,
     etc.): la retención varía por país. Como proxy conservador:
@@ -484,16 +496,16 @@ el forward dividend reportado por yfinance) y dejar que
 calculate_scenarios aplique la retención. NO descontar a mano.
 ```
 
-### Ejemplo concreto (SPY long spot, 12 meses)
+### Ejemplo concreto (JPM long spot, 12 meses)
 ```
-SPY: precio $550, posición $5,000, dividend_yield ~1.3% → $65 anual bruto
-APY esperado 10%, vol 15%
+JPM: precio $215, posición $5,000, dividend_yield ~2.4% → $120 anual bruto
+APY esperado 9%, vol 22%
 
 calculate_scenarios(
   amount_usd=5000,
-  expected_apy=0.10,
-  volatility_annual=0.15,
-  passive_income_annual_usd=65,        ← BRUTO (no neto)
+  expected_apy=0.09,
+  volatility_annual=0.22,
+  passive_income_annual_usd=120,       ← BRUTO (no neto)
   months=12,
   leverage=1.0,
   monthly_cost_usd=0.0,
@@ -501,25 +513,25 @@ calculate_scenarios(
 )
 
 Resultado en escenario base:
-  passive_income_gross_usd: 65
-  passive_income_net_usd:   45.50      ← lo que recibe el usuario
-  withholding_deducted_usd: 19.50      ← IRS lo retiene
+  passive_income_gross_usd: 120
+  passive_income_net_usd:    84.00     ← lo que recibe el usuario
+  withholding_deducted_usd:  36.00     ← IRS lo retiene
 ```
 
-### Ejemplo con CFD 2x + dividendo (SPY CFD)
+### Ejemplo con CFD 2x + dividendo (KO CFD)
 ```
 CFDs en eToro reciben dividendos equivalentes (adjustment) que también
 están sujetos a retención. Combinación típica:
 
 calculate_scenarios(
   amount_usd=500,                     ← margen
-  expected_apy=0.10,
-  volatility_annual=0.15,
-  passive_income_annual_usd=13,       ← 1.3% sobre notional de $1,000
+  expected_apy=0.07,
+  volatility_annual=0.16,
+  passive_income_annual_usd=30,       ← 3.0% sobre notional de $1,000
   months=6,
   leverage=2.0,
   monthly_cost_usd=4.50,              ← overnight fee mensual
-  dividend_withholding_pct=0.30,      ← SPY = US
+  dividend_withholding_pct=0.30,      ← KO = US
   funding_rate_daily_pct=0.0,         ← CFDs NO tienen funding (tienen overnight)
 )
 ```
@@ -819,3 +831,63 @@ nombre. Si el agente encuentra que está recomendando siempre los mismos
 3-4 tickers sesión tras sesión, eso es señal de que el screener no se
 está ejecutando realmente o los filtros son demasiado estrechos —
 revisar y ampliar el perfil antes de recomendar.
+
+## Política de ejemplos (v9.3)
+
+**Regla de diseño:** los ejemplos didácticos de este documento (y de
+`technical_skill.md`) **rotan deliberadamente** entre tickers de
+sectores y perfiles distintos. Esto es intencional: si todos los
+ejemplos usaran NVDA/AAPL/SPY, el modelo aprendería a tratarlos como
+referencia narrativa por defecto y los traería a las recomendaciones
+incluso cuando el screener devolvió otros candidatos más adecuados.
+
+### Set rotatorio de ejemplos
+
+Los ejemplos de tickers en este skill se eligen del siguiente set,
+balanceando sectores:
+
+| Sector              | Tickers ejemplo (rotar entre éstos)        |
+|---------------------|--------------------------------------------|
+| Financials          | JPM, BAC, V, GS                            |
+| Consumer staples    | KO, PG, JNJ, PEP                           |
+| Healthcare          | UNH, MRK, ABT, LLY                         |
+| Industrials/Defense | LMT, CAT, HON, RTX                         |
+| Energy              | XOM, CVX, COP                              |
+| Tech (no estrella)  | MSFT, ORCL, IBM, CSCO                      |
+| ETFs amplios        | DIA, IWM, IVV, SCHD, RSP                   |
+| ETFs sectoriales    | XLF, XLE, XLV, XLI, XLP                    |
+
+### Reglas de rotación
+
+```
+1. Un mismo ticker NO debe aparecer como protagonista de dos ejemplos
+   consecutivos en este documento.
+
+2. Si un ejemplo necesita un ticker concreto para ilustrar un payload
+   real (ej. CRM en § "Ejemplo real" de yfinance), conservarlo —
+   cambiarlo perdería realismo del payload.
+
+3. Para ejemplos genéricos (cálculo de scenarios, ilustración de
+   filtros, plantillas de respuesta), preferir un placeholder
+   `<TICKER>` o un ticker del set rotatorio, NUNCA NVDA/AAPL/SPY/QQQ
+   por defecto.
+
+4. Las menciones a NVDA en los changelogs v9.0/v9.1/v9.2 se conservan
+   intactas: están documentando el anti-patrón histórico, no
+   sirviendo de ejemplo vivo.
+
+5. Cuando un ejemplo necesita un ETF US que pague dividendo, preferir
+   DIA, IWM, IVV o SCHD sobre SPY/QQQ/VOO. Cuando necesita un US
+   stock que pague dividendo, preferir JPM, KO, JNJ, PG, XOM, LMT
+   sobre los favoritos de tech.
+```
+
+### Por qué importa
+
+Esta regla protege el invariante universo (arriba): si los ejemplos
+del skill anclan al modelo en NVDA/AAPL/SPY, el agente puede terminar
+"recordando" esos tickers como respaldo cuando el screener dudosamente
+los devolvió. La rotación deliberada elimina ese sesgo desde la
+documentación misma. Si un mantenedor agrega un nuevo ejemplo, debe
+elegir un ticker del set rotatorio (o uno nuevo equivalente) — no
+volver a NVDA por inercia.

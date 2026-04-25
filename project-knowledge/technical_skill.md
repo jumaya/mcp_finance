@@ -1,4 +1,12 @@
-# Skill: Análisis técnico — v1
+# Skill: Análisis técnico — v1.1
+
+> **Changelog v1.1:** rotación de tickers en los ejemplos didácticos.
+> El "Ejemplo real" pasa de NVDA a JPM (financial, perfil moderado),
+> y la línea de cronograma del Tab 2 usa un ticker del set rotatorio
+> en lugar de NVDA. Motivo: alineación con `equity_skill.md` v9.3 —
+> evitar que los ejemplos del skill anclen al modelo en NVDA/AAPL/SPY
+> como referencia narrativa por defecto. Ver § "Política de ejemplos"
+> al final del documento.
 
 ## Qué es este skill y qué NO es
 
@@ -435,7 +443,7 @@ Tab 1 "📊 Plan" — Paso 4 (posiciones con detalle):
 
 Tab 2 "📅 Cronograma" — Semana 1 a 4:
   Respetar la modulación por postura (§ Parte 4).
-  Ejemplo Semana 1: "Comprar 33% de NVDA a mercado (postura BEARISH
+  Ejemplo Semana 1: "Comprar 33% de LMT a mercado (postura BEARISH
   informativa — entrada escalonada)."
 
 Tab 4 "⚠️ Riesgo" — Sección "Triggers de salida":
@@ -445,29 +453,35 @@ Tab 4 "⚠️ Riesgo" — Sección "Triggers de salida":
   por vertical.
 ```
 
-## Ejemplo real (NVDA, validado con datos ilustrativos)
+## Ejemplo real (JPM, validado con datos ilustrativos)
 
-Datos recolectados por `equity_skill` para NVDA:
+> **Nota de la v1.1:** este ejemplo migró de NVDA a JPM. Misma
+> estructura pedagógica (postura neutral con sesgo bullish, R:R
+> favorable, confluencia Fibonacci + SMA), distinto sector (financials
+> en lugar de semiconductores) para evitar anclaje del modelo en
+> "tickers favoritos". Los números son ilustrativos.
+
+Datos recolectados por `equity_skill` para JPM:
 
 ```
-OHLC 90d: swing low $95.50 (día -45) → swing high $142.00 (día -12)
-Precio actual: $118.30
-RSI (14): 48
-MACD: line -0.8, signal -0.3, histogram -0.5 (cruzó bajo hace 6 días)
-SMA 50: $125.00
-SMA 200: $108.00
-Volumen 20d promedio: 45M; últimos 3 días: 38M (bajo)
-ATR (14): $4.20
+OHLC 90d: swing low $185.00 (día -45) → swing high $232.00 (día -12)
+Precio actual: $208.50
+RSI (14): 49
+MACD: line -0.6, signal -0.2, histogram -0.4 (cruzó bajo hace 6 días)
+SMA 50: $215.00
+SMA 200: $198.00
+Volumen 20d promedio: 12M; últimos 3 días: 9.5M (bajo)
+ATR (14): $3.10
 Señal TradingView: "neutral"
 ```
 
 Aplicación del protocolo:
 
 ```
-Paso 3 — Swing: $95.50 → $142.00 (rango $46.50)
+Paso 3 — Swing: $185.00 → $232.00 (rango $47.00)
 
 Paso 4 — Patrón: NO hay doble suelo (solo un low reciente). Consolidación
-en rango $115-$125 últimas 2 semanas → triángulo simétrico en formación,
+en rango $205-$215 últimas 2 semanas → triángulo simétrico en formación,
 aún no confirmado. Postura tentativa: neutral-a-bullish.
 
 Paso 5 — Divergencia: MACD sigue bajo cero pero histogram dejó de caer
@@ -481,26 +495,26 @@ Paso 6 — Conteo:
             → 2 señales
   Postura: NEUTRAL
 
-Paso 7 — Fibonacci sobre swing $95.50-$142.00:
-  0.382 retroceso → $124.24
-  0.500 retroceso → $118.75  ← precio actual está aquí ($118.30)
-  0.618 retroceso → $113.26
-  0.786 retroceso → $105.45
-  Extensión 1.272 → $154.67
-  Extensión 1.618 → $170.77
+Paso 7 — Fibonacci sobre swing $185.00-$232.00:
+  0.382 retroceso → $214.05
+  0.500 retroceso → $208.50  ← precio actual está aquí ($208.50)
+  0.618 retroceso → $202.95
+  0.786 retroceso → $195.06
+  Extensión 1.272 → $244.78
+  Extensión 1.618 → $261.05
 
-  Confluencia: 0.618 ($113.26) coincide con SMA 200 ($108.00) dentro de
-  ~5% → nivel fuerte.
+  Confluencia: 0.618 ($202.95) coincide con SMA 200 ($198.00) dentro de
+  ~2.5% → nivel fuerte.
 
-  Entrada sugerida: $118.30 (precio actual, ya en 0.500)
-  SL: $113.00 (justo bajo 0.618 + SMA 200 — confluencia fuerte)
-  TP1: $142.00 (swing high previo, más cerca que extensión 1.272)
-  TP2: $154.67 (extensión 1.272)
+  Entrada sugerida: $208.50 (precio actual, ya en 0.500)
+  SL: $200.00 (justo bajo 0.618 + SMA 200 — confluencia fuerte)
+  TP1: $232.00 (swing high previo, más cerca que extensión 1.272)
+  TP2: $244.78 (extensión 1.272)
 
 Paso 8 — R:R:
-  Riesgo: $118.30 − $113.00 = $5.30
-  Recompensa TP1: $142.00 − $118.30 = $23.70
-  R:R = 1:4.47 ✅ excelente
+  Riesgo: $208.50 − $200.00 = $8.50
+  Recompensa TP1: $232.00 − $208.50 = $23.50
+  R:R = 1:2.76 ✅ favorable
 
 Paso 9 — Cronograma modulado:
   Postura NEUTRAL → entrada 50% en Semana 1, 50% en Semana 2 al
@@ -512,15 +526,15 @@ Paso 10 — Invalidación técnica: NO aplica (postura no es bearish).
 Salida al bloque del Tab 1:
 
 ```
-Setup técnico NVDA:
+Setup técnico JPM:
   - Postura: NEUTRAL (2 señales alcistas, 2 bajistas)
   - Patrón: triángulo simétrico en formación (no confirmado)
   - Divergencias: MACD alcista tentativa
-  - Entrada sugerida: $118.30 (Fibonacci 0.500 del swing $95.50-$142.00)
-  - SL: $113.00 (confluencia Fibonacci 0.618 + SMA 200)
-  - TP1: $142.00 (swing high previo)
-  - TP2: $154.67 (extensión Fibonacci 1.272)
-  - R:R: 1:4.47
+  - Entrada sugerida: $208.50 (Fibonacci 0.500 del swing $185.00-$232.00)
+  - SL: $200.00 (confluencia Fibonacci 0.618 + SMA 200)
+  - TP1: $232.00 (swing high previo)
+  - TP2: $244.78 (extensión Fibonacci 1.272)
+  - R:R: 1:2.76
 ```
 
 ## Invariantes del skill
@@ -571,3 +585,46 @@ haber entregado, por cada posición direccional:
 ```
 
 Si algún punto queda vacío, el skill no terminó. No continuar.
+
+## Política de ejemplos (v1.1)
+
+**Regla de diseño:** los ejemplos didácticos de este skill rotan
+deliberadamente entre tickers de sectores distintos (ver
+`equity_skill.md` § "Política de ejemplos" para el set rotatorio
+canónico: JPM, KO, BAC, LMT, XOM, JNJ, MSFT, V, PG, UNH, DIA, IWM, etc.).
+
+### Por qué importa para este skill
+
+El "Ejemplo real" (§ arriba) es el bloque más copiado por el modelo
+cuando aprende patrones de salida. Si siempre fuera NVDA, el agente
+internalizaría asociaciones espurias del tipo:
+  - "rango $95-$142" → suena a NVDA → sugerir NVDA
+  - "neutral con divergencia MACD" → respuesta tipo NVDA
+  - "R:R 1:4.47" → magnitud típica del ejemplo NVDA
+
+Rotando el ticker del ejemplo (en v1.1, NVDA → JPM), el modelo asocia
+el **patrón estructural** (postura neutral, confluencia Fib+SMA, R:R
+favorable) con la **forma del análisis**, no con un símbolo concreto.
+
+### Reglas de rotación para futuros ejemplos en este archivo
+
+```
+1. Cuando se actualice este "Ejemplo real" en una versión futura,
+   cambiar también el ticker — no reescribir números manteniendo NVDA
+   por inercia.
+
+2. Los precios y rangos del ejemplo deben ser plausibles para el
+   ticker elegido en el momento de la edición (ej. JPM en rango
+   $185-$232 es realista para 2026; un rango $40-$70 no lo sería).
+
+3. El sector del ticker debe variar entre versiones: si v1.1 es
+   financials (JPM), v1.2 podría ser healthcare (UNH), v1.3 industrials
+   (LMT), etc.
+
+4. Conservar las mismas señales pedagógicas (postura NEUTRAL, MACD
+   divergente, confluencia Fib + SMA, R:R favorable). Lo que rota es
+   el ticker y los precios, no el aprendizaje.
+
+5. Las menciones genéricas a `<TICKER>` en plantillas (Tab 1, salidas
+   estándar) NO se cambian — son placeholders por diseño.
+```
