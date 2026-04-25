@@ -9,9 +9,27 @@ Claude NO recuerda sesiones anteriores. La continuidad se logra por **persistenc
 Las posiciones ACTUALES se leen directamente del MCP de eToro (`get_portfolio`), así que la parte "qué tengo hoy" está resuelta. Lo que no está en ningún MCP es el plan original (tesis, pesos objetivo, SL/TP, catalizadores) — eso vive en el BASELINE.
 
 ## Activación
-- Usuario escribe cualquiera de: "revisa mi portafolio", "cómo va el plan", "seguimiento", "rebalancear", "review portfolio".
+- Usuario escribe cualquiera de: "revisa mi portafolio", "cómo va el plan", "seguimiento", "puedes hacer seguimiento", "haz seguimiento", "ya compré X", "ya invertí en X", "ya hice mi inversión", "cómo va mi posición", "rebalancear", "review portfolio", "cómo voy", "actualizar plan".
 - Usuario pega un bloque `BASELINE DE SEGUIMIENTO` (JSON) de una sesión previa.
 - Final de cada plan nuevo: el agente deja el bloque BASELINE para la próxima revisión.
+
+## Regla de prioridad sobre los skills verticales
+Si el mensaje contiene un disparador de tracking JUNTO con un ticker (p.ej.
+"ya invertí en QQQ, hazme seguimiento", "cómo va mi posición de BTC"),
+**este skill se carga en lugar de** equity/defi/forex_skill. El usuario
+tiene una posición existente y pregunta por su evolución, no por un plan
+nuevo del activo. Cargar el skill vertical aquí lleva al agente a buscar
+precios teóricos en Yahoo / Alpha Vantage en vez de leer la posición real
+del usuario en eToro — es exactamente el bug que estos skills previenen
+y el chequeo bloqueante [B11] de system.md hace fallar la respuesta.
+
+## Tool call obligatorio nº1: get_portfolio antes que cualquier otra cosa
+En toda activación del Modo B (usuario pidió seguimiento, NO se está cerrando un plan nuevo), el **primer tool call del turno** es `etoro-server.get_portfolio` si el usuario tiene eToro conectado. No `yfinance_get_ticker_info`, no `web_search`, no `search_mcp_registry`, no nada más. Razones:
+- La posición REAL (cantidad, precio de entrada, P&L de plataforma, valor actual) está en eToro, no en Yahoo. Yahoo da el precio de mercado teórico, no la posición del usuario.
+- Si el agente abre con Yahoo, va a inventar el precio de entrada (porque Yahoo no lo tiene) y va a calcular el P&L a mano — violando el principio #1 de system.md.
+- Si `etoro-server.get_portfolio` falla, decirlo explícito y pedir los datos al usuario. NO sustituir leyendo Yahoo.
+
+Si una tool con prefijo `etoro-server:` aparece en `<available_tools>` del proyecto, está conectada. NO buscar en el directorio público de Anthropic ("eToro no está en el directorio MCP") — ese directorio lista conectores de Anthropic, no los servers MCP locales del proyecto, que se configuran en `claude_desktop_config.json`.
 
 ## Fases del protocolo
 
@@ -26,6 +44,42 @@ Intentar en este orden hasta tener el baseline:
    - Para cada posición: ticker, %_objetivo, precio_entrada, venue, tesis en una línea.
 
 NUNCA asumas el baseline. Si falta data crítica (precios de entrada, pesos objetivo), pregunta. Vale usar precio de mercado del día del plan como proxy SOLO si el usuario confirma que no tiene el dato real — etiquetarlo `(proxy)` en todos los cálculos.
+
+### Caso especial — primera inversión muy reciente sin baseline pegado
+Patrón típico: el usuario dice "ya hice mi primera inversión en eToro a QQQ
+puedes hacer seguimiento" pocos días después de que se le entregó un plan, y
+no pega el bloque BASELINE. Protocolo:
+
+1. Llamar `etoro-server.get_portfolio` (es el primer tool call siempre, ver
+   regla en §"Tool call obligatorio nº1"). De ahí se lee `entry_price` real,
+   `quantity`, `current_price`, `unrealizedPnL`, `valueInvestedAtOpen`.
+
+2. Como no hay BASELINE pegado, el `compare_portfolio_to_baseline` aún no
+   se puede llamar de forma útil (le faltan los pesos objetivo del plan
+   original). Aquí dos caminos:
+
+   **Camino corto** (preferido cuando hay UNA sola posición y muy reciente):
+   - Reportar el estado actual de la posición leyendo SOLO los campos que
+     vinieron de `get_portfolio` (precio entrada, P&L absoluto y % que dio
+     la propia plataforma — no recalcular).
+   - Marcar explícitamente: "No tengo el baseline pegado, así que no puedo
+     comparar peso vs objetivo ni aplicar las alertas de desviación. Lo
+     que ves arriba viene 100% de eToro."
+   - Pedir al usuario el BASELINE para la próxima vez (UNA pregunta), o
+     reconstruir lo mínimo: "¿Cuál era el capital total del plan y cuál
+     era el peso objetivo de QQQ?".
+   - Aún así, dar la sección 4 (Qué hacer con cada posición) con la lógica
+     más conservadora del árbol — para una posición de pocos días, la
+     respuesta por defecto es "MANTENER, es muy pronto para evaluar tesis,
+     próxima revisión real en X días".
+
+   **Camino completo** (cuando el usuario reconstruye el BASELINE):
+   - Una vez con el BASELINE reconstruido, pasar a Fase B → C → D → E
+     normalmente.
+
+3. NUNCA estimar P&L desde un precio de entrada inventado o desde un precio
+   de Yahoo. Si `get_portfolio` falla y el usuario tampoco pegó el BASELINE,
+   decirlo explícito y detenerse — no rellenar.
 
 ### Fase B — Capturar posiciones actuales
 
@@ -168,19 +222,64 @@ Estructura obligatoria (es un artifact más liviano que el plan_template, NO los
    (SL técnico, correlación recalculada, earnings < 7 días, DeFi APY,
    copy trader drawdown) y que el agente calculó con otras tools.
 
-4. REBALANCEO SUGERIDO (si aplica)
+4. QUÉ HACER CON CADA POSICIÓN — recomendación accionable obligatoria
+   **Esta sección es OBLIGATORIA en TODA respuesta de tracking, incluso si todo
+   está 🟢.** No basta con "va bien, sigue así". El usuario pidió seguimiento
+   para saber qué hacer ahora — el reporte cierra esa pregunta.
+
+   Para CADA posición del payload (incluso las 🟢), dar UNA acción explícita.
+   Árbol de decisión sugerido:
+
+   - status="🟢" Y abs(weight_deviation_pp) ≤ 5 Y pnl_pct entre -5% y +20% Y
+     tesis del baseline sigue viva
+       → "MANTENER. Continuar DCA mensual si el plan original lo contemplaba,
+          al monto y calendario originales. Próxima revisión: [fecha]."
+   - status="🟢" Y pnl_pct > +20% Y todavía no se realizó parcial
+       → "REALIZAR PARCIAL: vender 25% de la posición para asegurar ganancia
+          y mover stop a break-even (precio de entrada del baseline = $X).
+          El 75% restante mantiene la tesis original."
+   - status="🟡" por desviación de peso 5-15 p.p.
+       → "REBALANCEAR: vender/comprar $Z USD para volver al peso objetivo.
+          (Detalle en sección 5 abajo.)"
+   - status="🟡" por pérdida 5-15% pero tesis intacta y perfil lo permite
+       → "DCA: comprar $W USD adicionales si tienes capital nuevo disponible.
+          NO vender. La tesis original sigue vigente: [resumen 1 línea]."
+   - status="🔴" por SL técnico alcanzado
+       → "CERRAR. El SL del baseline era $X y hoy cotiza por debajo. No
+          negociar con el SL del plan."
+   - status="🔴" por desviación > 15 p.p. o pérdida > 15% con tesis rota
+       → "CERRAR Y REASIGNAR: cerrar la posición, evaluar si el capital
+          libre se reasigna a otra posición subponderada del plan o a
+          reserva."
+   - posición es muy reciente (días desde entry < 7) y no hay alerta
+       → "MANTENER. Es muy pronto para evaluar tesis (< 7 días). El
+          rendimiento de corto plazo es ruido. Próxima revisión real:
+          [fecha del schedule del baseline]."
+   - posición está en new_positions[] (no estaba en el baseline original)
+       → preguntar al usuario tesis y peso objetivo; NO recomendar
+         mantener/cerrar sin contexto.
+
+   El árbol de arriba es guía, no exhaustivo. La acción concreta SIEMPRE
+   se cruza contra risk_rules.md (límites de concentración, defensivo,
+   correlación) y platforms_skill.md (mínimos por venue antes de proponer
+   un trade).
+
+5. REBALANCEO SUGERIDO (si aplica)
    Gatillo: alguna posición con abs(weight_deviation_pp) > 5 en el payload.
    - Tabla: qué vender, qué comprar, cuánto USD, en qué plataforma.
    - Verificar cada ticker de eToro pasa el gate search_instruments antes de escribirlo.
 
-5. NUEVO BASELINE DE SEGUIMIENTO (JSON actualizado)
+6. NUEVO BASELINE DE SEGUIMIENTO (JSON actualizado) — OBLIGATORIO al final
    Bloque listo para que el usuario guarde y pegue en la próxima sesión.
    Actualiza: pesos actuales como nuevo objetivo SOLO si se ejecutó el rebalanceo;
    si no, mantener pesos objetivo originales.
+   Si la respuesta NO incluye este bloque, viola [B13] de system.md y se reescribe.
 
-6. PRÓXIMA REVISIÓN SUGERIDA
+7. PRÓXIMA REVISIÓN SUGERIDA
    - Fecha concreta (DD-MM-AAAA).
    - Qué va a chequear específicamente.
+   - Recordatorio textual: "Para revisarla, escríbeme 'revisa mi portafolio'
+     y pega el bloque BASELINE de arriba."
 ```
 
 ## Calendario de revisión (referencia)
@@ -195,12 +294,15 @@ ANUAL: consolidar rendimientos reales del año.
 ## Reglas de interacción específicas
 
 - **Nunca inventar precios de entrada.** Si el baseline no los tiene y el usuario tampoco los recuerda, pedirlos. Como último recurso, usar precio de mercado del día del plan original como proxy y etiquetar TODOS los cálculos con `(proxy)`.
+- **Nunca calcular el P&L a mano desde precios de Yahoo.** El P&L correcto está en `get_portfolio.unrealizedPnL` (lo da la plataforma). Calcularlo "a mano" desde `(current_price - entry_price) / entry_price` cuando ambos son adivinados es el patrón #1 de fallo del tracking — ver [B12] de system.md.
+- **eToro propio del proyecto vs directorio público de Anthropic.** Si en `<available_tools>` ves tools con prefijo `etoro-server:` están conectadas vía `claude_desktop_config.json`. NO buscar "etoro" en `search_mcp_registry` ni decir al usuario "eToro no está como conector" — `search_mcp_registry` lista conectores oficiales de Anthropic, no los servers MCP locales del proyecto. Si la tool aparece en el listado de tools, está disponible.
 - **Gate eToro sigue aplicando en el rebalanceo.** Si la acción propuesta incluye comprar más de X en eToro, validar con `search_instruments` antes de escribirla en el reporte.
 - **No alterar risk_rules.** Si el rebalanceo propuesto empujaría el portafolio fuera de los límites del perfil (concentración, % defensivo, leverage promedio), marcarlo y proponer alternativa que respete los límites.
-- **Honestidad cuando no hay señal.** Si el plan va razonablemente y no hay nada que hacer, decirlo explícito: "Plan en rango. Próxima revisión: [fecha]. No hay acción requerida." No inventar "ajustes tácticos" para parecer útil.
+- **Honestidad cuando no hay señal.** Si el plan va razonablemente y no hay nada táctico que hacer, decirlo explícito: "Plan en rango. Próxima revisión: [fecha]. Acción: MANTENER, continuar DCA mensual al monto del plan original." No inventar "ajustes tácticos" para parecer útil — pero TAMPOCO omitir la sección 4 (Qué hacer con cada posición). "Mantener" SÍ es una acción concreta y va en esa sección.
 - **Si `get_portfolio` falla o devuelve vacío**, decirlo explícito y ofrecer el camino alternativo (pedir posiciones al usuario). No rellenar.
 - **No recalcular la aritmética del tracking en prompting.** Si el agente necesita P&L, desviación de peso o clasificación semáforo por umbrales, la fuente es `compare_portfolio_to_baseline`. Hacer la aritmética "a mano" viola el principio #1 de system.md.
 - **Warnings de la tool siempre visibles.** Si `compare_portfolio_to_baseline` devuelve `warnings[]` no vacío (capital=0, pesos que no suman 100, entry_price faltante, etc.), mencionarlos explícitamente al inicio del reporte antes de presentar conclusiones. El usuario debe saber qué parte del análisis está sobre data incompleta.
+- **Rally muy fuerte en pocos días NO es razón para cambiar el plan.** Si el P&L de una posición está por encima del escenario optimista del baseline en una fracción del horizonte (p.ej. supera el +16% de 6M en 1 mes), la acción correcta NO es "mantener y dejar correr" sin más — es revisar el árbol de decisión §4: si pnl > +20% considerar realizar parcial 25% y mover stop a break-even; si pnl entre +5 y +20% mantener; en ambos casos NO cambiar la tesis original por el rendimiento de corto plazo.
 
 ## Schema del BASELINE DE SEGUIMIENTO
 

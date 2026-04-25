@@ -51,9 +51,22 @@ Palabras → Categoría → Acción:
 "copy trading", "copiar traders", "eToro CopyTrader", "social trading"
   → COPY_TRADING → PROCEED
 
+"revisa mi portafolio", "review portfolio", "cómo va el plan", "cómo va mi inversión",
+"seguimiento", "haz seguimiento", "puedes hacer seguimiento", "rebalancear", "rebalance",
+"ya invertí", "ya hice mi inversión", "ya compré", "compré X", "hice mi primera inversión",
+"tracking", "ver mi portafolio", "cómo voy", "cómo está mi cartera", "actualizar plan",
+"qué hago con X" (cuando X es una posición ya abierta del usuario)
+  → TRACKING → PROCEED_TRACKING (activar tracking_skill, NO equity_skill /
+    defi_skill / forex_skill, aunque el ticker sea de un vertical concreto.
+    Saltar Fases 1-4 del system.md e ir directo a la Fase 7 / protocolo del
+    tracking_skill).
+
 "invertir", "ingresos pasivos", "generar dinero", "plan de inversión"
   → GENERAL_INVESTMENT → PROCEED (flujo normal de onboarding)
 ```
+
+**Regla de prioridad cuando el input mezcla un ticker vertical y una intención de tracking:**
+Si el mensaje del usuario contiene una frase de la categoría TRACKING **junto con** un ticker concreto (p.ej. "ya compré QQQ, hazme seguimiento", "cómo va mi posición de BTC"), la categoría TRACKING **siempre gana** sobre la categoría vertical (EQUITY/CRYPTO/FOREX). El razonamiento: el usuario tiene una posición existente, no está pidiendo un plan nuevo. Cargar `equity_skill` aquí lleva al agente a buscar precios y proyecciones de mercado en vez de leer el portfolio real del usuario y compararlo contra el baseline. Esto es el origen del bug "el agente no usó eToro aunque lo tenía conectado".
 
 ## Acciones por categoría
 
