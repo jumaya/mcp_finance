@@ -1,5 +1,20 @@
-# Skill: Agente de cripto, staking y DeFi — v3
+# Skill: Agente de cripto, staking y DeFi — v3.1
 
+> **Changelog v3.1:** documentada la **decisión explícita de NO usar
+> presets de TradingView** (`tradingview.list_presets`/`get_preset`) en
+> el descubrimiento direccional de cripto. Los 14 presets actuales son
+> todos de equity US (`momentum_stocks`, `quality_growth_screener`,
+> `dividend_stocks`, etc.); ninguno aplica a `screen_crypto`. Los únicos
+> presets que tocan cripto son `macro_assets` (BTC como activo macro,
+> consumido por `market_intelligence_skill.md §Paso 1`) y `market_indexes`
+> (no aplica al universo cripto). El descubrimiento direccional cripto
+> sigue por filtros propios sobre `screen_crypto` (perfil cripto
+> conservador / moderado / agresivo). Esta decisión queda documentada para
+> que el agente NO intente reusar presets de equity sobre cripto. Si en
+> el futuro el MCP server publica presets crypto-específicos, extender
+> el bloque "Descubrimiento dinámico de candidatos cripto" con la lógica
+> de selección. Ver § "Sobre presets de TradingView".
+>
 > **Changelog v3:** eliminadas las menciones cerradas a BTC/ETH/SOL como
 > el universo cripto direccional por defecto. Los candidatos direccionales
 > ahora se **descubren dinámicamente** vía `tradingview.screen_crypto` o
@@ -193,6 +208,43 @@ detectar:
     pasar el filtro de liquidez del perfil moderado.
   - Que ETH específicamente está en drawdown y falla un filtro
     `Perf.3M > -0.40` — dato accionable que el usuario necesita ver.
+
+### Sobre presets de TradingView (`list_presets` / `get_preset`)
+
+**Decisión documentada:** este skill **no consume** los presets de
+TradingView para el descubrimiento direccional cripto. Los 14 presets
+actuales (`quality_stocks`, `momentum_stocks`, `dividend_stocks`,
+`value_stocks`, `growth_stocks`, `quality_growth_screener`,
+`quality_compounder`, `garp`, `deep_value`, `breakout_scanner`,
+`earnings_momentum`, `dividend_growth`, `macro_assets`,
+`market_indexes`) son **todos de equity US**. Pasar uno a
+`screen_crypto` produciría error o resultados sin sentido (los campos
+`P/E`, `dividend_yield_recent`, `ROE` no existen en el universo cripto).
+
+**Quién sí los usa, por separación de responsabilidades:**
+
+  - `market_intelligence_skill.md §Paso 1` consume `macro_assets`
+    para extraer BTC como activo macro junto a SPY, QQQ, VIX, DXY,
+    Gold y Oil. Ese es el único punto del pipeline donde un preset
+    toca el universo cripto, y lo hace solo a nivel de contexto
+    (régimen risk-on / risk-off), NO de selección de candidatos.
+  - `equity_skill.md §Descubrimiento dinámico` consume el resto de
+    presets (`momentum_stocks`, `quality_growth_screener`, etc.)
+    como semilla del universo equity.
+
+**Qué hacer si el usuario pide "preset de cripto":** explicarle que
+los presets disponibles en el MCP son de equity y que para cripto el
+descubrimiento se hace por filtros directos sobre `screen_crypto`
+mapeados desde su perfil (CONSERVADOR / MODERADO / AGRESIVO). NO
+forzar un preset de equity sobre el universo cripto.
+
+**Cuándo revisitar esta decisión:** si una versión futura del MCP
+publica presets crypto-específicos (ej. `defi_majors`, `l2_momentum`,
+`stablecoin_yield`), extender el bloque "Descubrimiento dinámico de
+candidatos cripto" con un Paso 0 análogo al de `equity_skill.md`
+(recibir preset de `market_intelligence_skill`, componer overlays del
+perfil, llamar `screen_crypto`). Hasta entonces, el flujo actual con
+filtros directos por perfil es la forma correcta.
 
 ## 🚪 Gate de disponibilidad eToro (para cripto spot en eToro)
 

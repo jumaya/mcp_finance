@@ -1,5 +1,17 @@
-# Skill: Acciones y ETFs — v9.1
+# Skill: Acciones y ETFs — v9.2
 
+> **Changelog v9.2:** el descubrimiento de candidatos ahora **arranca con
+> el preset de TradingView** que `market_intelligence_skill.md §Paso 2`
+> elige según el perfil del usuario, no con filtros propios del skill.
+> El bloque de filtros por perfil (ALTO/MODERADO/BAJO) pasa de "fuente
+> primaria" a "overlay que se anexa al preset" + "fallback si los presets
+> caen". El motivo: los presets `tradingview.list_presets()` ya codifican
+> estrategias bien probadas (momentum, quality_growth, dividend, value,
+> deep_value, breakout, GARP…) que cubren mejor la intención del usuario
+> ("dame momentum" → `momentum_stocks` directo) que reconstruirlas a mano
+> aquí. Ver § "Descubrimiento dinámico de candidatos" → nuevo Paso 0' y
+> Paso 2 del protocolo.
+>
 > **Changelog v9.1:** eliminada por completo la tabla de volatilidad/drawdown
 > por categoría (que en v8.1 funcionaba como fallback documentado). La tabla,
 > aunque genérica, seguía sembrando un universo de "anclas" que el agente
@@ -53,8 +65,20 @@ Las listas fijas de tickers crean tres problemas:
 ### Perfiles por características (NO por tickers)
 
 Cada perfil de riesgo se define por rangos de métricas observables, no por
-nombres de empresa. El agente mapea el perfil del usuario → filtros de
-screener → candidatos.
+nombres de empresa.
+
+> **A partir de v9.2 estos bloques tienen DOS roles:**
+>
+> 1. **Overlays sobre el preset** (rol primario en el flujo nuevo): el
+>    PASO 0 del protocolo recibe un preset elegido por
+>    `market_intelligence_skill.md §Paso 2`. Los filtros de abajo se
+>    anexan a los del preset (intersección) para acotar el universo del
+>    preset al perfil del usuario.
+> 2. **Filtros standalone** (rol fallback): si los presets de TradingView
+>    caen, este skill opera con la matriz de abajo como filtros directos
+>    al `screen_stocks`. Era el flujo de v9.1.
+>
+> En ambos casos los rangos siguen siendo los mismos.
 
 ```
 PERFIL RIESGO ALTO (growth / momentum / convicción con leverage)
@@ -105,32 +129,70 @@ PERFIL RIESGO BAJO (income / preservación / ETFs amplios)
 > σ_anual ≳ 0.35. Ajustar el umbral si el usuario tiene un sesgo
 > específico en su perfil documentado.
 
-### Protocolo de descubrimiento (4 pasos)
+### Protocolo de descubrimiento (5 pasos — v9.2)
 
 ```
-PASO 1 — Mapear perfil del usuario → filtros
-  Leer el perfil del usuario (riesgo_general, verticales_activos, sesgos
-  declarados). Elegir el bloque de filtros de arriba (ALTO | MODERADO |
-  BAJO). Si el usuario pidió algo específico en la sesión ("quiero
-  semiconductores") añadir filtro `sector equal "Electronic Technology"`
-  o equivalente.
+PASO 0 — Recibir el preset elegido por market_intelligence_skill
+  Antes de este skill, market_intelligence_skill.md §Paso 2 ya corrió y
+  entregó un bloque "PRESET VERTICAL ELEGIDO" con:
+    - preset_key (ej. "momentum_stocks", "quality_growth_screener",
+                  "dividend_stocks", "deep_value", "breakout_scanner"…)
+    - filters_base (los filters del preset, ya con sort_by/sort_order/markets)
+    - overlays_perfil_sugeridos (filters adicionales del perfil del usuario)
+    - razón_elección
 
-PASO 2 — Llamar al screener
+  Si market_intelligence_skill NO corrió (caso raro: omitido por el
+  orquestador o pidió explícitamente que se saltara), elegir preset
+  localmente con la tabla resumida:
+    PERFIL ALTO     + sin sesgo → "momentum_stocks"
+    PERFIL MODERADO + sin sesgo → "quality_growth_screener"
+    PERFIL BAJO     + sin sesgo → "dividend_stocks" o "quality_stocks"
+  Y ejecutar:
+    config = tradingview.get_preset(preset_key)
+  El payload trae filters/sort_by/sort_order/markets listos para usar.
+
+PASO 1 — Componer filtros finales: preset + overlays del perfil
+  filtros_finales = filters_base ∪ overlays_perfil_sugeridos
+
+  Los overlays del perfil sirven para acotar el universo del preset al
+  perfil de riesgo del usuario (ver § "Perfiles por características"):
+    PERFIL ALTO:
+      + market_cap_basic        > 10_000_000_000
+      + average_volume_30d_calc > 5_000_000
+      + typespecs has ["common"]
+    PERFIL MODERADO:
+      + market_cap_basic        > 50_000_000_000
+      + average_volume_30d_calc > 3_000_000
+    PERFIL BAJO:
+      + market_cap_basic        > 20_000_000_000
+      + beta_1_year             < 1.2
+
+  Si el usuario pidió un sector específico ("quiero semiconductores"),
+  añadir aquí también: `sector equal "Electronic Technology"`.
+
+  Conflicto: si un overlay del perfil contradice un filter del preset
+  (ej. el preset trae `RSI in [50, 70]` y el overlay quería `RSI < 30`),
+  el filter del PRESET gana — el preset codifica la estrategia, el
+  overlay sólo la acota. Loguear el conflicto.
+
+PASO 2 — Llamar al screener con filtros compuestos
   tradingview.screen_stocks(
-    filters=[...bloque del perfil...],
+    filters=filtros_finales,
     columns=["name", "close", "market_cap_basic", "Volatility.M",
              "beta_1_year", "dividend_yield_recent", "Perf.3M",
              "Perf.Y", "sector", "average_volume_30d_calc",
              "RSI", "SMA50", "SMA200"],
-    sort_by=...,
-    sort_order="desc",
+    sort_by=config.sort_by,          ← del preset
+    sort_order=config.sort_order,    ← del preset
     limit=20,
-    markets=["america"]
+    markets=config.markets           ← del preset (típicamente ["america"])
   )
 
-  Si el screener devuelve < 5 candidatos → relajar UN filtro a la vez
-  (en este orden: average_volume_30d_calc → Perf.3M → market_cap_basic).
-  Loguear al usuario qué filtro se relajó y por qué.
+  Si el screener devuelve < 5 candidatos → relajar overlays del PERFIL
+  primero, no del preset (en este orden: average_volume_30d_calc →
+  beta_1_year → market_cap_basic). Loguear al usuario qué filtro se
+  relajó y por qué. Si tras relajar todos los overlays sigue < 5,
+  mantener el preset puro (filters_base solo).
 
 PASO 3 — Diversificación sectorial (pre-gate)
   Sobre los N candidatos brutos, antes del gate eToro:
@@ -157,15 +219,28 @@ PASO 4 — Gate eToro sobre TODOS los candidatos
 > de la sesión. Ningún ticker se presenta al usuario hasta pasar el
 > **Gate de disponibilidad eToro** (ver sección dedicada abajo).
 
-### Qué hacer si el screener falla
+> 🪪 **Trazabilidad obligatoria:** en el plan final, dejar mención
+> explícita del preset usado y los overlays. Ejemplo:
+> > "Universo descubierto vía preset 'quality_growth_screener' de
+> >  TradingView (ROE >15%, márgenes >12%, golden cross, RSI 45-65) +
+> >  overlays de perfil moderado (mcap >$50B, volumen >3M/día). De los
+> >  18 candidatos, 14 pasaron el gate eToro."
+> Esto permite al usuario auditar el universo si pregunta "¿por qué
+> estos tickers?".
+
+### Qué hacer si los presets caen / fallan
 
 Prioridad de fallback (en este orden):
-  1. Reintentar con el preset equivalente:
-     - ALTO → `tradingview.get_preset("momentum_stocks")` o
-       `"growth_stocks"`, luego `screen_stocks` con esos filtros.
-     - MODERADO → `get_preset("quality_growth_screener")`.
-     - BAJO → `get_preset("dividend_stocks")` o `"quality_stocks"`.
-  2. Si los presets también fallan: NO caer a una lista hardcoded.
+  1. **Otro preset del mismo eje** del PASO 0 (ej. si `momentum_stocks`
+     no responde para perfil ALTO → probar `growth_stocks`; si
+     `quality_growth_screener` cae para MODERADO → probar `garp` o
+     `quality_compounder`; si `dividend_stocks` cae para BAJO → probar
+     `dividend_growth` o `quality_stocks`).
+  2. **Filtros directos del perfil sin preset** (la matriz de
+     "Perfiles por características" arriba — flujo v9.1 anterior). El
+     vertical opera entonces sin preset, con su propia matriz de filtros.
+     Loguear al usuario que el preset no respondió.
+  3. **Si el screener directo también falla:** NO caer a una lista hardcoded.
      Informar al usuario literal:
      > "El screener de TradingView no está respondiendo ahora. Puedo
      > trabajar con tickers que tú me des explícitamente (3-6 símbolos),
@@ -620,14 +695,39 @@ Payload real de `yfinance_get_ticker_info("CRM")`:
 ```
 AL INICIO DE LA SESIÓN (una sola vez, antes del loop por candidato):
 
-  0'. 🔭 Descubrimiento dinámico (bloqueante):
-      tradingview.screen_stocks(filters=<según perfil del usuario>, limit=15-20)
-      → aplicar diversificación sectorial (≤ 5 por sector salvo petición
-        explícita del usuario)
-      → si el screener falla: intentar presets equivalentes
-        (get_preset → screen_stocks); si también fallan, NO inventar
-        lista — pedir tickers al usuario o reintentar luego.
-      → resultado: lista de N candidatos brutos para esta sesión.
+  0'. 🔭 Descubrimiento dinámico (bloqueante) — v9.2 con preset:
+
+      a) Recoger del bloque "PRESET VERTICAL ELEGIDO" que entregó
+         market_intelligence_skill.md §Paso 2:
+           - preset_key, filters_base, sort_by/sort_order/markets
+           - overlays_perfil_sugeridos
+         (Si market_intelligence_skill no corrió, elegir preset por
+          tabla resumida: ALTO→momentum_stocks, MODERADO→quality_growth_screener,
+          BAJO→dividend_stocks; ejecutar tradingview.get_preset(preset_key)
+          y obtener config localmente.)
+
+      b) Componer filtros: filtros_finales = filters_base ∪ overlays_perfil
+
+      c) Ejecutar:
+         tradingview.screen_stocks(
+           filters=filtros_finales,
+           columns=[<lista del PASO 2 arriba>],
+           sort_by=config.sort_by,
+           sort_order=config.sort_order,
+           limit=15-20,
+           markets=config.markets
+         )
+
+      d) Aplicar diversificación sectorial (≤ 5 por sector salvo petición
+         explícita del usuario).
+
+      e) Si el screener falla: probar otro preset del mismo eje
+         (ver § "Qué hacer si los presets caen / fallan"); si todos
+         caen, usar filtros del perfil sin preset; si también falla,
+         NO inventar lista — pedir tickers al usuario o reintentar luego.
+
+      → resultado: lista de N candidatos brutos para esta sesión, con
+        el preset_key y los filtros usados loguueados para trazabilidad.
 
 POR CADA acción candidata de la lista anterior (en este ORDEN):
 

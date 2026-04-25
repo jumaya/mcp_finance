@@ -1,10 +1,19 @@
-# platforms_skill.md — Plataformas de inversión (eToro + Binance) desde Colombia — v1
+# platforms_skill.md — Plataformas de inversión (eToro + Binance) desde Colombia — v2
 
 Conocimiento operativo de las dos plataformas que usa el inversor colombiano
 en este agente. Objetivo: que el agente no proponga posiciones **imposibles
 de ejecutar** (USD $5 en eToro, pares inexistentes en Binance CO, depósitos
 vía métodos no soportados desde COP, etc.) ni ignore fricciones reales
 de entrada/salida en pesos.
+
+> **Changelog v2:** universo Binance CO pasa a ser DINÁMICO. La lista de
+> 31 tokens de la sección 2.4 queda como referencia histórica, no como
+> universo preferente ni como atajo de validación. Toda propuesta cripto
+> en Binance se valida en vivo vía `binance.get_24hr_ticker` (operabilidad
+> + liquidez) y, cuando aplica, se descubre vía `tradingview.screen_crypto`
+> (filtros por perfil). Ver § 2.5 para el protocolo. Esto alinea el skill
+> con el descubrimiento dinámico que ya usa `defi_skill.md` y refleja
+> que ambos MCPs (binance + tradingview) están conectados en el agente.
 
 > **Vigencia:** datos verificados a abril 2026. Mínimos, spreads, métodos
 > P2P y pares disponibles cambian con frecuencia. Si el usuario reporta
@@ -288,10 +297,17 @@ Universo aproximado desde CO:
   ~1,500 pares spot activos
   Stablecoins principales: USDT, USDC, FDUSD, DAI
 
-Tokens confirmados disponibles desde CO (referencia, no exhaustivo):
+Tokens vistos históricamente operables desde CO (lista de REFERENCIA,
+no exhaustiva, NO es el universo preferente):
   BTC, ETH, SOL, BNB, XRP, ADA, DOGE, TRX, AVAX, LINK, DOT,
   MATIC/POL, LTC, BCH, ATOM, NEAR, ARB, OP, APT, SUI, TON,
   HBAR, FIL, ICP, AAVE, MKR, UNI, LDO, RUNE, INJ, PEPE
+
+  ⚠ Esta lista NO funciona como atajo: que un token aparezca aquí no
+  exime de validar su estado actual con tools en vivo (sección 2.5).
+  El listado de Binance cambia (delistings, "Seed Tag", restricciones
+  por jurisdicción), por lo que el universo operable es DINÁMICO y
+  se descubre/valida en cada plan, no se asume.
 
 Productos derivados:
   Futures USDⓈ-M: sí disponible desde CO
@@ -308,24 +324,79 @@ Tokens NO disponibles o con restricciones variables (verificar antes
 de cualquier recomendación concreta):
   → Algunos tokens se desactivan por monitoreo (Binance "Seed Tag" o
     "Monitoring Tag") en determinadas jurisdicciones.
-  → Si el plan propone un token fuera de los "confirmados" de arriba,
-    el agente debe validarlo antes (ver 2.5).
+  → CUALQUIER token que el plan proponga en Binance — esté o no en
+    la lista de referencia de arriba — debe validarse en vivo con
+    el protocolo de la sección 2.5 antes de presentarse al usuario.
 ```
 
-### 2.5 Validación de disponibilidad Binance (sin MCP dedicado)
+### 2.5 Validación dinámica de disponibilidad Binance (OBLIGATORIA)
 
-Hoy **no hay MCP de Binance conectado** (a diferencia de eToro). Para
-validar disponibilidad de un token:
+El universo operable de Binance desde Colombia es **dinámico**. La lista
+de la sección 2.4 es histórica y orientativa: no se usa como atajo para
+saltarse validación. **Toda propuesta cripto que toque Binance** —spot,
+Simple Earn, futures, staking— pasa por este protocolo antes de llegar
+al usuario, esté el token "en la lista" o no.
+
+MCPs disponibles para validar (ya conectados en este agente):
+  - `binance.get_24hr_ticker`   → estado real del par + volumen 24h
+  - `binance.get_price`         → precio spot actual del par
+  - `binance.get_orderbook`     → profundidad / liquidez efectiva
+  - `tradingview.screen_crypto` → descubrimiento + filtros de perfil
+                                  (market cap, volumen, momentum, etc.)
 
 ```
-Si el plan propone un token en Binance que NO está en la lista
-"confirmados desde CO" (sección 2.4):
-  1. Declararlo al usuario como "disponibilidad a verificar"
-  2. Instrucción al usuario: "Antes de depositar, busca <TOKEN>/USDT
-     en binance.com — si el par aparece y permite 'Spot Trade', está
-     operable desde tu cuenta"
-  3. NO calcular escenarios con supuestos de precio si el token no
-     se pudo validar — pedir al usuario que confirme primero
+PROTOCOLO (aplica SIEMPRE, sin excepción por "estar en la lista"):
+
+  Paso 1 — DESCUBRIMIENTO (si el plan aún no fija ticker concreto):
+    Llamar tradingview.screen_crypto con filtros derivados del perfil
+    del usuario (market cap, volumen 24h, volatilidad, sector). Esto
+    define los candidatos. NO partir del set BTC/ETH/SOL por defecto.
+
+  Paso 2 — VALIDACIÓN DE OPERABILIDAD (todo candidato seleccionado):
+    Para cada <TOKEN> propuesto, llamar:
+      binance.get_24hr_ticker(symbol="<TOKEN>USDT")
+    Lecturas mínimas para considerar el par operable:
+      - Respuesta válida (no error / símbolo inexistente)
+      - volume (24h en TOKEN) > 0  y  quoteVolume (24h en USDT) con
+        tamaño coherente con la posición planeada
+      - lastPrice coherente con tradingview / coingecko (descartar
+        pares ilíquidos con precio "atascado")
+    Si se necesita confirmar liquidez para tickets grandes:
+      binance.get_orderbook(symbol="<TOKEN>USDT", limit=20)
+      → bid/ask spread razonable y profundidad suficiente para el
+        tamaño de la posición sin slippage > 0.5%.
+
+  Paso 3 — DECISIÓN:
+    a) Par válido + liquidez suficiente → token entra al plan, se
+       calculan escenarios con el lastPrice devuelto por la tool.
+    b) Par no existe / ticker devuelve error / volumen ~ 0 →
+       token se descarta y se sustituye por un equivalente del
+       mismo perfil (sector, market cap, volatilidad) repitiendo
+       Paso 2 sobre el sustituto.
+    c) Par existe pero con "Seed Tag" / "Monitoring Tag" / volumen
+       muy bajo → declarar al usuario el riesgo de liquidez y
+       proponer alternativa de mayor cap antes de calcular tamaños.
+
+  Paso 4 — REGISTRO EN EL PLAN:
+    El plan documenta para cada posición cripto:
+      - símbolo del par operado (ej. "SOLUSDT")
+      - precio usado en escenarios (lastPrice de get_24hr_ticker)
+      - timestamp aproximado de la validación
+      - cualquier flag de monitoreo detectado
+
+REGLA DURA:
+  Ningún ticker cripto llega al usuario sin pasar Paso 2 con respuesta
+  válida en vivo. La presencia del token en la lista 2.4 NO sustituye
+  la validación. La ausencia del token en la lista 2.4 NO lo descarta:
+  se valida igual y se decide por el resultado de las tools.
+
+FALLBACK (sólo si las tools de Binance no responden):
+  Si binance.* falla por API/red en el momento del plan, el agente:
+    1. Marca la posición como "disponibilidad a verificar manualmente"
+    2. Instruye al usuario a buscar <TOKEN>/USDT en binance.com y
+       confirmar que aparece "Spot Trade" antes de depositar
+    3. NO calcula escenarios con precios asumidos — pide al usuario
+       que confirme antes de seguir, o reintenta la validación.
 ```
 
 ### 2.6 Comisiones Binance (plan debe incluirlas)
