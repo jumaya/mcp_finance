@@ -609,6 +609,23 @@ analistas y momentum viene **dentro del payload de `ticker_info`**. El
 agente debe extraer explícitamente estos campos — no basta con llamar
 la tool y resumir "en general".
 
+**Enforcement (B17 del system.md):** los campos marcados "SIEMPRE" en
+la tabla de abajo son OBLIGATORIOS para todo equity individual del
+plan, y deben aparecer en `data.posiciones[].fundamentales` del
+artifact JSX (estructura definida en plan_template.md §"Esqueleto JSX").
+Si el payload no trae un campo, se escribe literal "no disponible vía
+yfinance" — NO se omite, NO se inventa, NO se sustituye con frase
+vaga tipo "earnings season Q1 2026". Sin estos campos extraídos para
+cada equity individual, B17 falla y el plan no se entrega.
+
+Excepción: ETFs broad-market (SPY, QQQ, VTI, IWM y similares) no
+tienen earnings de empresa singular — para esos se marca
+`fundamentales: { tipo: "etf_broad", aplica: false }` en el artifact
+y se omite el bloque completo.
+
+Cripto y forex: B17 NO aplica. Esos verticales usan defi_skill /
+forex_skill con sus propias fuentes de datos fundamentales.
+
 ### Campos obligatorios a extraer y presentar
 
 | Campo JSON                    | Qué es                             | Cuándo mostrar |

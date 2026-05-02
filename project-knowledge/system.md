@@ -185,6 +185,9 @@ llamadas). Construirlo durante la sesión, no al final.
 
 Antes de pasar a Fase 5, CALCULAR también:
   tramo_capital = bucket(monto_usuario) ∈ {<$200, $200-500, $500-2000, >$2000}
+  // bucket(): cerrado-izq abierto-der; frontera ($200, $500, $2000) → tramo inferior.
+  // Ver plan_template.md §"Convención de fronteras" para el detalle y la
+  // nota de presentación obligatoria si el capital cae exactamente en límite.
   minimo_aplicable = tabla(perfil_riesgo, tramo_capital)  // de plan_template.md
   Guardar ambos para usarlos en Tab 3 y en el auto-chequeo final.
 
@@ -294,13 +297,58 @@ La verificación se hace en DOS pasadas. La primera es bloqueante: si algo falla
 BLOQUE BLOQUEANTE — si alguno falla, NO envíes, REESCRIBE
 ═══════════════════════════════════════════════════════════════
 
-Estos 16 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí significa que el plan está mal o entregado en el medio incorrecto, no que está mal presentado en detalles cosméticos.
+Estos 17 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí significa que el plan está mal o entregado en el medio incorrecto, no que está mal presentado en detalles cosméticos.
 
   [B1] GATE eTORO. Todo ticker que el plan sitúe en eToro pasó search_instruments y cumple isCurrentlyTradable + isBuyEnabled + instrumentType correcto. Los que no pasaron fueron sustituidos por equivalentes, no ocultados.
 
   [B2] MÍNIMOS DE VENUE. Cada posición cumple el mínimo de su plataforma según platforms_skill (eToro: $10 spot / $50 CFD / $200 copy / $500 smart portfolio; Binance: $10 spot, Simple Earn sin mínimo; otros venues: el que documente platforms_skill).
 
   [B3] SL/TP TÉCNICO. Para cada posición direccional (equity, forex, cripto spot al comprar), technical_skill entregó SL y TP derivados técnicamente (Fibonacci, swing, o ATR fallback), con R:R ≥ 1:1.5. Posiciones no direccionales (stablecoin lending, staking, copy trading) no requieren este chequeo.
+
+  Criterio de aceptación verificable (cualquier `FAIL` reescribe el plan):
+
+  Cómo se calcula R:R para una posición LONG:
+    riesgo  = entrada - SL                  (siempre positivo)
+    recompensa_TP1 = TP1 - entrada
+    R:R_TP1 = recompensa_TP1 / riesgo
+
+  Para posición SHORT, se invierte (entrada arriba, SL arriba, TP abajo).
+
+  Regla principal (default, plan single-target o salida 100% en TP1):
+    → R:R a TP1 ≥ 1.5
+    → Esto es lo que evita "TP1 0.98" como en sesión 2 con CVS:
+      entrada $82.09, SL $74 (riesgo $8.09), TP1 $90 (recompensa $7.91)
+      → R:R_TP1 = 0.98 → FAIL.
+
+  Excepción única — setup "salida en dos pasos":
+    Si el plan documenta explícitamente que la posición sale en dos
+    tramos (50% en TP1 + 50% en TP2 con SL movido a break-even tras
+    TP1 — patrón estándar de technical_skill), se acepta TP1 < 1.5
+    SI Y SOLO SI el R:R PONDERADO cumple:
+
+      R:R_ponderado = 0.5 × R:R_TP1 + 0.5 × R:R_TP2 ≥ 1.8
+
+    Y esta política de salida en dos pasos aparece literalmente en
+    `data.posiciones[].setup_tecnico.justificacion` y en
+    `data.triggers_salida` del artifact (no es un parche post-hoc).
+
+    Sesión 2 con CVS bajo esta excepción:
+      R:R_TP1 = 0.98, R:R_TP2 = ($96.58 - $82.09) / $8.09 = 1.79
+      ponderado = 0.5×0.98 + 0.5×1.79 = 1.39 → FAIL incluso con excepción.
+    Conclusión: el setup de CVS estaba mal diseñado y B3 lo habría
+    bloqueado. El SL debió bajar a $76 (riesgo $6.09 → R:R_TP1 = 1.30,
+    aún FAIL) o el TP1 subir a $94+ — había que rediseñar entrada,
+    no pasarlo por el aro.
+
+  Lo que cuenta como FAIL automático (sin invocar la excepción):
+    - R:R_TP1 < 1.5 sin política de salida en dos pasos documentada.
+    - R:R_TP1 < 1.5 con política documentada PERO ponderado < 1.8.
+    - SL "default eToro" de 0.0001 o TP "default" 6134 (placeholders
+      que la plataforma pone si no defines manualmente). Estos no son
+      SL/TP técnicos — son ausencia de SL.
+    - SL fijado por % arbitrario ("-10% del precio") sin referencia a
+      un nivel técnico (Fib 0.5, low del swing, ATR×2). technical_skill
+      es el dueño del cómo; B3 solo verifica el resultado.
 
   [B4] TRAMO DE CAPITAL Y PERFIL IDENTIFICADOS. tramo_capital ∈ {<$200, $200-500, $500-2000, >$2000} y perfil_riesgo están explícitos en Tab 3, y el mínimo aplicable sale de la tabla de plan_template.md (no de un número arbitrario).
 
@@ -415,6 +463,60 @@ Estos 16 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí
       `data.tool_calls_realizadas` es array vacío, B16 falla — no se
       entrega.
 
+  [B17] FUNDAMENTALES EXTRAÍDOS POR POSICIÓN DE EQUITY. Para cada ticker
+  de equity en el plan (acciones individuales o ETFs activos, NO ETFs
+  broad-market tipo SPY/QQQ donde no aplican earnings de empresa),
+  `yfinance_get_ticker_info` corrió en esta sesión y los campos
+  obligatorios documentados en equity_skill.md §"Extracción de datos
+  de yfinance_get_ticker_info" están presentes en el artifact dentro
+  de `data.posiciones[].fundamentales` (estructura definida en el
+  esqueleto de plan_template.md).
+
+  Campos OBLIGATORIOS en `data.posiciones[].fundamentales` (uno por
+  ticker direccional de equity individual):
+    - `earnings_date`           (string dd-mm-yyyy o "no disponible")
+    - `earnings_is_estimate`    (boolean — del campo isEarningsDateEstimate)
+    - `target_mean_price`       (number o null)
+    - `num_analysts`            (integer o null)
+    - `recommendation_key`      (string "buy"/"hold"/"sell" o null)
+    - `change_52w_pct`          (number — del campo 52WeekChange × 100)
+    - `change_52w_sp500_pct`    (number — del campo SandP52WeekChange × 100)
+    - `forward_pe`              (number o null)
+    - `peg_ratio`               (number o null)
+    - `current_price`           (number — del campo currentPrice)
+
+  Criterio de aceptación verificable (cualquier `FAIL` reescribe el plan):
+    - Cada posición de tipo equity individual tiene el bloque
+      `fundamentales` con los 10 campos. Los campos ausentes en el
+      payload de yfinance se reportan como string literal `"no
+      disponible vía yfinance"`, NO se omiten ni se inventan.
+    - `earnings_date` está en formato es-CO (dd-mm-yyyy) y, si
+      `earnings_is_estimate=true`, eso queda visible en la presentación
+      del Tab 1. Frases vagas como "earnings season Q1 2026", "reporta
+      en mayo", "próximo trimestre" están PROHIBIDAS y son un FAIL —
+      el payload tenía la fecha exacta y se ignoró (viola principio #6
+      del system.md, extracción completa de payloads).
+    - Si `tool_calls_realizadas` no contiene una entrada
+      `yahoo-finance.yfinance_get_ticker_info` por cada ticker de
+      equity individual, B17 falla automáticamente — los datos del
+      bloque fundamentales no pueden venir de "memoria" del modelo.
+    - Excepción para ETFs broad-market (SPY, QQQ, VTI, IWM, etc.):
+      `fundamentales` puede omitirse o marcarse como
+      `{ tipo: "etf_broad", aplica: false }`. Estos ETFs no tienen
+      earnings de empresa singular y los campos `target_mean_price`,
+      `peg_ratio`, etc. no son significativos.
+    - Para cripto (BTC, ETH, etc.) y forex pairs, B17 no aplica —
+      `yfinance_get_ticker_info` no es la fuente correcta. El skill
+      vertical (defi_skill / forex_skill) define qué extraer y B17
+      lo respeta.
+
+  Por qué bloqueante: la sesión 3 turno 1 generó setup técnico de APA
+  y HOOD sin haber llamado yfinance, y la fecha de earnings aparecía
+  como "estimada" cuando el payload tenía 06-may confirmada. Esto
+  pone al usuario en posición de tomar decisión sobre evento binario
+  con información incompleta. Q2 (calidad) lo mencionaba pero como
+  guideline; B17 lo convierte en gate ejecutable.
+
   Por qué B15 y B16 son bloqueantes y no de calidad: los chequeos B1-B14
   ya cubrían QUÉ tools se deben usar, pero no DEMOSTRABAN que se usaron.
   Las sesiones reales han mostrado que el agente puede afirmar "corrí
@@ -424,7 +526,7 @@ Estos 16 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí
   auditable). Sin ambos, la "regla dura" de B1-B14 era declarativa y no
   ejecutable.
 
-Regla dura: si alguno de B1–B16 falla → NO envíes la respuesta. Reescribe hasta que todos pasen. No hay excepciones "menores" en este bloque; cada ítem toca un principio no negociable del agente.
+Regla dura: si alguno de B1–B17 falla → NO envíes la respuesta. Reescribe hasta que todos pasen. No hay excepciones "menores" en este bloque; cada ítem toca un principio no negociable del agente.
 
 ═══════════════════════════════════════════════════════════════
 BLOQUE DE CALIDAD — corrige antes de enviar, no exige rehacer

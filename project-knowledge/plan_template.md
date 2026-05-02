@@ -35,6 +35,48 @@ RIESGO BAJO (1-3/10):
   Capital $500-2000:    mínimo +4% base 6M
   Capital > $2000:      mínimo +5% base 6M
 
+Convención de fronteras (capital exactamente en el límite)
+
+Las etiquetas "$200-500", "$500-2000", "$2000+" son visualmente
+ambiguas en los puntos de corte ($200, $500, $2000). Para evitar
+discrecionalidad, los buckets son cerrados por la izquierda y abiertos
+por la derecha — el límite SIEMPRE pertenece al tramo INFERIOR:
+
+  bucket(capital) =
+    "<$200"      si capital < 200
+    "$200-500"   si 200 ≤ capital ≤ 500     ← $500 cae aquí
+    "$500-2000"  si 500 < capital ≤ 2000    ← $2000 cae aquí
+    ">$2000"     si capital > 2000
+
+Casos límite resueltos:
+  $200 exacto → tramo $200-500 (mínimo +20% si perfil alto)
+  $500 exacto → tramo $200-500 (mínimo +20% si perfil alto, NO +30%)
+  $2000 exacto → tramo $500-2000 (mínimo +30% si perfil alto, NO +40%)
+
+Por qué frontera al inferior y no al superior: el capital justo en el
+límite tiene la misma estructura de costos que el resto del tramo
+inferior (depósito CO 3-5%, mínimos por posición que obligan a
+concentrar). Subirlo al tramo superior duplicaría el mínimo exigido
+sin que el costo proporcional baje. La excepción honesta es que el
+usuario aporte capital adicional para cruzar el límite explícitamente
+("voy a poner $550 en lugar de $500 para que entre al siguiente
+tramo") — en ese caso el bucket recalcula y se aplica el mínimo
+superior. Sin ese aporte explícito, frontera = tramo inferior.
+
+Implementación en Fase 4 del system.md:
+  tramo_capital = bucket(monto_usuario)  // función arriba
+  minimo_aplicable = tabla(perfil_riesgo, tramo_capital)
+
+Nota de presentación en Tab 3:
+  Si capital cae en frontera ($200, $500, $2000), añadir una línea
+  explícita en `honestidad_rendimiento`:
+    "Capital $500 está en frontera $200-500 / $500-2000. Por convención
+     se aplica el tramo inferior ($200-500, mínimo +20%). Para entrar
+     al tramo $500-2000 (mínimo +30%) habría que aportar capital
+     adicional ($501+)."
+  Esto evita que el usuario vea "+20% mínimo con $500" y se pregunte
+  por qué no es "+30%".
+
 Justificación del escalado:
   - Depósito COP→USD (PSE/tarjeta): costo fijo 1.5-3% independiente del monto → pesa más sobre capital pequeño.
   - Retiro USD→COP: costo fijo ~$5-10 USD → sobre $200 es 2.5-5%, sobre $2000 es 0.25-0.5%.
@@ -152,12 +194,32 @@ const data = {
     //   risk_score: 0,                    // ← decimal de calculate_risk_score (B15). Enteros redondos = juicio = FAIL.
     //   risk_score_componentes: "...",    // ← desglose devuelto por la tool: vol_componente, drawdown_componente, liquidez_componente, leverage_componente. Sin esto B15 falla.
     //   risk_score_real: 0,               // ← OPCIONAL: overlay del agente por evento binario. Si se usa, ambos valores aparecen y la diferencia se justifica con catalizador concreto + fecha. NO reemplaza risk_score (de la tool).
+    //
+    //   // B17: OBLIGATORIO para equity individual. Omitir o marcar
+    //   // { tipo: "etf_broad", aplica: false } para ETFs broad (SPY, QQQ, VTI, IWM).
+    //   // No aplica a cripto/forex (esos verticales tienen sus propios skills).
+    //   fundamentales: {
+    //     earnings_date: "06-05-2026",          // dd-mm-yyyy o "no disponible vía yfinance"
+    //     earnings_is_estimate: true,           // del campo isEarningsDateEstimate
+    //     target_mean_price: 268.87,            // number o null si payload no lo trae
+    //     num_analysts: 52,                     // integer o null
+    //     recommendation_key: "buy",            // "buy"|"hold"|"sell" o null
+    //     change_52w_pct: -22.9,                // 52WeekChange × 100
+    //     change_52w_sp500_pct: 38.15,          // SandP52WeekChange × 100
+    //     forward_pe: 10.27,                    // number o null
+    //     peg_ratio: 0.72,                      // number o null
+    //     current_price: 182.14,                // del payload, NO del modelo
+    //   },
+    //
     //   setup_tecnico: { // null si no aplica (lending/staking/copy)
     //     postura: "BULLISH|NEUTRAL|BEARISH|NO_CLARO",
     //     patron: "...",
     //     entrada: 0, sl: 0, tp1: 0, tp2: 0,
-    //     rr: "1:2.1",
-    //     justificacion: "..."
+    //     rr_tp1: 0,                            // ← número (B3): recompensa_TP1 / riesgo. Debe ser ≥ 1.5 salvo excepción documentada.
+    //     rr_tp2: 0,                            // ← número
+    //     rr_ponderado: 0,                      // ← 0.5×rr_tp1 + 0.5×rr_tp2 (solo si política "salida en dos pasos" documentada)
+    //     salida_dos_pasos: false,              // ← boolean: true habilita la excepción de B3 (TP1<1.5 si ponderado≥1.8)
+    //     justificacion: "...",                 // ← si salida_dos_pasos=true, mencionar literal "50% en TP1, 50% en TP2 con SL a BE tras TP1"
     //   },
     //   overnight_fee_mensual_usd: 0, // solo CFD, 0 si no aplica
     // }
@@ -511,6 +573,7 @@ Checklist de calidad (verificar ANTES de generar el artifact JSX)
 □ ¿Tab 4 renderiza la sección "Trazabilidad de tools" con la tabla? (B16)
 □ ¿Tramo de capital y perfil de riesgo identificados explícitamente en Tab 3?
 □ ¿Rendimiento base ≥ mínimo del tramo correcto (capital + riesgo)?
+□ ¿Si capital cae en frontera ($200, $500, $2000), Tab 3 documenta explícitamente que se aplica el tramo INFERIOR y por qué? (A1, ver §"Convención de fronteras")
 □ ¿Si base < mínimo del tramo superior, se aclara que es por el capital, NO por riesgo del plan?
 □ ¿% defensivo ≤ límite del perfil?
 □ ¿Cada posición cumple el mínimo de su venue (platforms_skill §4)?
@@ -518,7 +581,11 @@ Checklist de calidad (verificar ANTES de generar el artifact JSX)
 □ ¿Checkpoints ✅ visibles?
 □ ¿Disclaimers al final del Tab 4?
 □ ¿Cada posición direccional tiene bloque "Setup técnico" con SL/TP derivados de technical_skill.md?
-□ ¿El R:R técnico por posición es ≥ 1:1.5 (equity/cripto) o ≥ 1:2 (forex)? Si alguna posición queda por debajo, ¿está marcada explícitamente?
+□ ¿`rr_tp1` y (si aplica) `rr_tp2` aparecen como números en `setup_tecnico`, no solo como string "1:2.1"? (B3)
+□ ¿`rr_tp1 ≥ 1.5`? Si NO, ¿`salida_dos_pasos: true` está marcado, `justificacion` lo describe literal y `rr_ponderado ≥ 1.8`? Si nada de eso → reescribir entrada/SL/TP. (B3, ver A2)
+□ ¿Para cada equity individual hay bloque `fundamentales` con los 10 campos (earnings_date, target_mean_price, num_analysts, recommendation_key, change_52w_pct, change_52w_sp500_pct, forward_pe, peg_ratio, current_price, earnings_is_estimate)? Campos ausentes en payload se reportan literal "no disponible vía yfinance", no se omiten. (B17)
+□ ¿`tool_calls_realizadas` incluye una entrada `yahoo-finance.yfinance_get_ticker_info` por cada equity individual del plan? Sin esa entrada, los datos del bloque fundamentales no son trazables. (B16+B17)
+□ ¿ETFs broad-market (SPY, QQQ, etc.) tienen `fundamentales: { tipo: "etf_broad", aplica: false }` en lugar del bloque completo? (B17)
 □ ¿La modulación del cronograma (Tab 2) refleja la postura técnica? (Bullish → entrada Semana 1; Neutral → 50/50 S1-S2; Bearish → 33/resto condicionado)
 □ ¿Los SL técnicos aparecen también en el Tab 4 como triggers de salida?
 □ ¿El Tab 4 incluye el bloque BASELINE DE SEGUIMIENTO en JSON con todos los campos del schema de tracking_skill.md?
