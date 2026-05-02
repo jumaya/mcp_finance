@@ -428,12 +428,20 @@ Estos 17 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí
       Earn), risk_score = 1.0 fijo es aceptable y no requiere llamada
       a la tool — pero debe quedar marcado explícitamente como
       "stablecoin/cash, score asignado por convención".
-    - El `risk_score_real` distinto del `risk_score_tool` (overlay del
-      agente por evento binario inminente, ver M1 del backlog) es
-      ACEPTABLE solo si AMBOS valores aparecen en el artifact y la
-      diferencia se justifica con catalizador concreto y fecha. No
-      reemplaza B15: el `risk_score_tool` debe seguir viniendo de la
-      tool con decimales y componentes.
+    - El `risk_score_real` distinto del `risk_score_tool` es ACEPTABLE
+      solo si se calculó vía R7 "Event Risk Overlay" de risk_rules.md
+      (overlay determinista por componentes con evidencia: earnings <Nd,
+      catalizador regulatorio, small-cap mcap<$2B, etc.). El artifact
+      muestra:
+        risk_score          (= risk_score_tool, decimal de la tool)
+        event_overlay       (objeto con `total` y array `componentes`,
+                              cada uno con `tipo`, `puntos`, `evidencia`)
+        risk_score_real     (= saturar(risk_score_tool + event_overlay.total))
+      Si `risk_score_real ≠ risk_score_tool` y `event_overlay.componentes`
+      está vacío o ausente, el overlay es juicio del agente — FAIL.
+      Sesión 1 reportaba `tool=2.4 → real=7.0` con justificación textual
+      vaga; bajo R7 la diferencia debe descomponerse en suma determinista
+      de componentes documentados.
 
   [B16] SELF-AUDIT TRAZABLE EN EL ARTIFACT. Antes de entregar, el agente
   rellena en `data.tool_calls_realizadas` (array obligatorio del

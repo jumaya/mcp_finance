@@ -191,9 +191,22 @@ const data = {
     //   asignacion_usd: 0, asignacion_pct: 0,
     //   precio_entrada: 0, fuente_precio: "yfinance",
     //   tesis: "...", catalizador: "...", catalizador_fecha: "DD-MM-AAAA",
-    //   risk_score: 0,                    // ← decimal de calculate_risk_score (B15). Enteros redondos = juicio = FAIL.
+    //   risk_score: 0,                    // ← decimal de calculate_risk_score (B15). Enteros redondos = juicio = FAIL. Este es el risk_score_tool.
     //   risk_score_componentes: "...",    // ← desglose devuelto por la tool: vol_componente, drawdown_componente, liquidez_componente, leverage_componente. Sin esto B15 falla.
-    //   risk_score_real: 0,               // ← OPCIONAL: overlay del agente por evento binario. Si se usa, ambos valores aparecen y la diferencia se justifica con catalizador concreto + fecha. NO reemplaza risk_score (de la tool).
+    //
+    //   // R7 Event Risk Overlay (risk_rules.md). Determinista, NO juicio.
+    //   // Si total>0, risk_score_real DEBE aparecer y ser igual a
+    //   // saturar(risk_score + event_overlay.total).
+    //   event_overlay: {
+    //     total: 0,                       // suma de componentes saturada a [0, 4]
+    //     componentes: [
+    //       // { tipo: "earnings_<7d", puntos: 2.0, evidencia: "earnings 06-may-2026, 6 días, confirmado" }
+    //       // { tipo: "earnings_estimate_factor", puntos: -0.6, evidencia: "isEarningsDateEstimate=true, ×0.7 sobre +2.0" }
+    //       // { tipo: "small_cap_<2B", puntos: 0.5, evidencia: "marketCap=$1.4B" }
+    //       // { tipo: "regulatorio_<30d", puntos: 1.0, evidencia: "PDUFA date 15-may-2026" }
+    //     ]
+    //   },
+    //   risk_score_real: 0,               // = saturar(risk_score + event_overlay.total). OBLIGATORIO si event_overlay.total > 0.
     //
     //   // B17: OBLIGATORIO para equity individual. Omitir o marcar
     //   // { tipo: "etf_broad", aplica: false } para ETFs broad (SPY, QQQ, VTI, IWM).
