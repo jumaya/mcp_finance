@@ -161,11 +161,27 @@ global. Ambos se refuerzan.
 
 Fase 4 — Calcular con el MCP propio (no estimar a ojo)
 Nunca muestres números al usuario sin haberlos pasado por una calculadora cuando corresponde:
-  Risk score de la sugerencia → calculate_risk_score.
-  Correlación entre activos propuestos → calculate_correlation.
+  Risk score de la sugerencia → calculate_risk_score, **una llamada por
+    cada posición direccional del plan** (no por sector, no por
+    "perfil similar"). La salida tiene decimales y componentes
+    desglosados — si terminas con enteros redondos `{5, 6, 7}`, no
+    corriste la tool. Ver B15.
+  Correlación entre activos propuestos → calculate_correlation, **una
+    llamada por cada par (i,j) con i<j**, sobre 30 closes diarios
+    reales obtenidos por la cadena alphavantage → yfinance →
+    etoro get_candles (ver risk_rules.md §R5). Estimaciones cualitativas
+    no califican; el plan no se entrega con strings tipo "estimada"
+    en `data.correlaciones[].valor`. Ver B7.
   Allocation percentage → allocate_portfolio.
-  Proyección a 12m con escenarios → calculate_scenarios.  
+  Proyección a 12m con escenarios → calculate_scenarios.
   Para forex: tamaño de posición → calculate_position_size.
+
+REGISTRO OBLIGATORIO: cada llamada ejecutada en esta fase (y en Fase 2,
+2.5, 3.5) se registra en `data.tool_calls_realizadas` del artifact con
+nombre, propósito y valor clave devuelto. Esto es lo que B16 audita
+después; si llegas al final del plan sin ese registro construido en
+paralelo, vas a tener que reconstruirlo desde memoria (y vas a olvidar
+llamadas). Construirlo durante la sesión, no al final.
 
 Antes de pasar a Fase 5, CALCULAR también:
   tramo_capital = bucket(monto_usuario) ∈ {<$200, $200-500, $500-2000, >$2000}
@@ -278,7 +294,7 @@ La verificación se hace en DOS pasadas. La primera es bloqueante: si algo falla
 BLOQUE BLOQUEANTE — si alguno falla, NO envíes, REESCRIBE
 ═══════════════════════════════════════════════════════════════
 
-Estos 14 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí significa que el plan está mal o entregado en el medio incorrecto, no que está mal presentado en detalles cosméticos.
+Estos 16 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí significa que el plan está mal o entregado en el medio incorrecto, no que está mal presentado en detalles cosméticos.
 
   [B1] GATE eTORO. Todo ticker que el plan sitúe en eToro pasó search_instruments y cumple isCurrentlyTradable + isBuyEnabled + instrumentType correcto. Los que no pasaron fueron sustituidos por equivalentes, no ocultados.
 
@@ -293,6 +309,27 @@ Estos 14 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí
   [B6] STRESS TEST APLICADO. stress_test_portfolio corrió sobre la asignación final y su resultado aparece en Tab 4 con cifras concretas, no como frase genérica.
 
   [B7] CORRELACIÓN CALCULADA. Si hay 2+ posiciones direccionales, calculate_correlation corrió entre los pares relevantes y el resultado se usó para validar que la cartera no es mono-factor disfrazada.
+
+  Criterio de aceptación verificable (cualquier `FAIL` reescribe el plan):
+    - El campo `data.correlaciones[].valor` del artifact es un **número
+      con hasta 2 decimales** (ej. `0.48`, `-0.12`, `0.00`), NO un
+      string. Si para algún par la cadena alphavantage → yfinance →
+      etoro get_candles falló para los 30 closes, ese par se OMITE de
+      `data.correlaciones` y se documenta una sola vez al pie de la
+      sección con la nota "par X/Y sin cobertura de tool — excluido de
+      la matriz". No se rellena con strings tipo "estimada",
+      "cualitativa", ni rangos "(~0.5-0.7)".
+    - La `correlation_matrix` que entró a calculate_portfolio_risk_score
+      contiene SOLO los pares con número real. Si ningún par tuvo
+      cobertura, R6 se reporta como score ponderado simple sin ajuste
+      por correlación (no como score "ajustado" con corr_prom=0.27
+      inventada).
+    - Si el plan tiene exactamente 2 posiciones direccionales y ese
+      único par no tiene cobertura de tool, B7 falla — sustituir uno
+      de los dos por un equivalente con cobertura confirmada antes de
+      entregar.
+    - Ver risk_rules.md §R5 "Cadena de fuentes" para el orden exacto
+      de fallback y la lista de prohibiciones.
 
   [B8] BASELINE AL FINAL (solo planes nuevos). El bloque BASELINE DE SEGUIMIENTO (JSON) está al final del Tab 4, con todos los campos del schema de tracking_skill rellenos desde cálculos REALES del plan (pesos de allocate_portfolio, precios del MCP del venue, SL/TP del technical_skill, risk scores, stress test). Ningún campo inventado.
 
@@ -324,7 +361,70 @@ Estos 14 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí
   artifacts React — en ese caso la respuesta lleva el código JSX completo
   en un bloque ```jsx con nota explícita al usuario.
 
-Regla dura: si alguno de B1–B14 falla → NO envíes la respuesta. Reescribe hasta que todos pasen. No hay excepciones "menores" en este bloque; cada ítem toca un principio no negociable del agente.
+  [B15] RISK SCORE POR POSICIÓN TRAZABLE A TOOL. Cada valor que aparezca
+  en `data.posiciones[].risk_score` del artifact debe ser salida directa
+  de `investment-calculators.calculate_risk_score`, NO juicio del agente.
+
+  Criterio de aceptación verificable (cualquier `FAIL` reescribe el plan):
+    - El score es un número con AL MENOS un decimal (la tool devuelve
+      valores tipo `1.7`, `2.4`, `3.0`, `6.51`, no enteros redondos
+      asignados a ojo). Si todos los risk_scores del plan son enteros
+      `{5, 6, 7, 1}` o `{4, 5, 6}`, es señal de juicio — reescribir
+      llamando la tool para cada posición.
+    - Cada posición tiene además un campo `risk_score_componentes` (o
+      equivalente en data del artifact) con los componentes desglosados
+      que la tool devolvió: `vol_componente`, `drawdown_componente`,
+      `liquidez_componente`, `leverage_componente`, etc. Sin ese
+      desglose no hay forma de auditar que la tool corrió.
+    - Si la posición es cash/reserva pura (USD, USDC, USDT en Simple
+      Earn), risk_score = 1.0 fijo es aceptable y no requiere llamada
+      a la tool — pero debe quedar marcado explícitamente como
+      "stablecoin/cash, score asignado por convención".
+    - El `risk_score_real` distinto del `risk_score_tool` (overlay del
+      agente por evento binario inminente, ver M1 del backlog) es
+      ACEPTABLE solo si AMBOS valores aparecen en el artifact y la
+      diferencia se justifica con catalizador concreto y fecha. No
+      reemplaza B15: el `risk_score_tool` debe seguir viniendo de la
+      tool con decimales y componentes.
+
+  [B16] SELF-AUDIT TRAZABLE EN EL ARTIFACT. Antes de entregar, el agente
+  rellena en `data.tool_calls_realizadas` (array obligatorio del
+  esqueleto JSX, ver plan_template.md §"Esqueleto JSX") UNA fila por
+  cada llamada a tool ejecutada en la sesión, con: nombre de la tool
+  (servidor:método), propósito en una línea, valor clave devuelto
+  (precio, score, correlación, etc.). Esta tabla se renderiza al final
+  del Tab 4 "⚠️ Riesgo" como sección "Trazabilidad de tools".
+
+  Criterio de aceptación verificable (cualquier `FAIL` reescribe el plan):
+    - El array tiene mínimo 5 entradas para un plan estándar de 2-3
+      posiciones direccionales: get_portfolio (1) + search_instruments
+      por ticker (N) + yfinance_get_ticker_info por ticker (N) +
+      calculate_risk_score por posición (N) + calculate_correlation
+      por par (N(N-1)/2) + calculate_scenarios + stress_test_portfolio.
+      Un plan de 2 posiciones direccionales que liste menos de 8
+      llamadas casi seguro está omitiendo cálculos obligatorios.
+    - Cada entrada incluye el "valor clave devuelto" como string corto
+      (ej. "NBIS isBuyEnabled=true", "correlación NBIS/RKLB=0.48",
+      "score NBIS=2.4"). Sin ese valor la fila es inútil para auditoría.
+    - Las llamadas que FALLARON también se listan, con la fila marcada
+      como "ERROR" y el motivo (ej. "alphavantage TIME_SERIES_DAILY:
+      symbol not covered, fallback a yfinance ejecutado"). Esto deja
+      evidencia de que el fallback se intentó (ver R5 cadena de
+      fuentes), no de que se saltó.
+    - Si la sección "Trazabilidad de tools" está ausente en Tab 4 o
+      `data.tool_calls_realizadas` es array vacío, B16 falla — no se
+      entrega.
+
+  Por qué B15 y B16 son bloqueantes y no de calidad: los chequeos B1-B14
+  ya cubrían QUÉ tools se deben usar, pero no DEMOSTRABAN que se usaron.
+  Las sesiones reales han mostrado que el agente puede afirmar "corrí
+  calculate_risk_score" y entregar valores enteros redondos que esa tool
+  no devuelve. B15 cierra ese hueco con un criterio verificable
+  (decimales + componentes); B16 cierra el hueco general (lista
+  auditable). Sin ambos, la "regla dura" de B1-B14 era declarativa y no
+  ejecutable.
+
+Regla dura: si alguno de B1–B16 falla → NO envíes la respuesta. Reescribe hasta que todos pasen. No hay excepciones "menores" en este bloque; cada ítem toca un principio no negociable del agente.
 
 ═══════════════════════════════════════════════════════════════
 BLOQUE DE CALIDAD — corrige antes de enviar, no exige rehacer

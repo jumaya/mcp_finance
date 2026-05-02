@@ -45,9 +45,34 @@ SI viola → reemplazar por alternativas flexibles.
 ### R5: Correlación
 ```
 PARA cada par (i, j) de activos del plan con i < j:
-  → Obtener 30 días de precios de cierre reales desde Alpha Vantage
-    para ambos activos.
+  → Obtener 30 días de precios de cierre reales (closes diarios).
   → Ejecutar calculate_correlation(prices_a, prices_b).
+  → El valor devuelto es el ÚNICO número aceptable. Sin tool no hay
+    correlación — punto.
+
+Cadena de fuentes para los 30 closes (probar en orden, parar al primer
+éxito; cada par puede usar fuentes distintas):
+
+  1. alphavantage TIME_SERIES_DAILY (preferida para acciones US y forex):
+     - Endpoint canónico, splits/dividends ajustados.
+     - Si responde con 30+ closes válidos para AMBOS activos → usar.
+
+  2. yahoo-finance.yfinance_get_price_history (fallback general):
+     - Pedir period="2mo", interval="1d" y tomar últimos 30 closes.
+     - Cobertura amplia: equity global, ETFs, cripto majors (BTC-USD,
+       ETH-USD), índices.
+     - Si responde con 30+ closes para AMBOS activos → usar.
+
+  3. etoro-server.get_candles (fallback para activos eToro-only):
+     - Útil cuando el activo solo se opera en eToro y otras fuentes no
+       lo cubren. Pedir 30 candles diarios y extraer columna Close.
+
+  Si NINGUNA de las tres fuentes devuelve 30 closes válidos para ambos
+  activos del par → ese par queda como "no disponible vía tool" y se
+  EXCLUYE de la correlation_matrix pasada a calculate_portfolio_risk_score
+  (no se rellena con un valor inventado, no se promedia desde sectores,
+  no se usa "estimada" como string). El plan se entrega con la nota
+  explícita en Tab 4 de qué par quedó sin medir y por qué.
 
 Umbrales (sobre el valor devuelto por la tool, no sobre supuestos):
   SI correlación > 0.7:
@@ -60,14 +85,24 @@ Umbrales (sobre el valor devuelto por la tool, no sobre supuestos):
   SI correlación ≤ 0.3:
     → Buena diversificación. Reportar el valor.
 
-Datos faltantes:
-  Si no se obtienen 30 días de precios para algún activo (ticker no
-  cubierto, símbolo nuevo, error de la API), NO inventar correlaciones
-  ni usar estimaciones del modelo. Marcar el par como "correlación no
-  disponible" en la presentación y dejar la decisión al usuario.
+PROHIBIDO (cualquiera de estos invalida la sesión, B7 falla):
+  ❌ Usar correlaciones precalculadas o pares "conocidos" que no
+     provengan de calculate_correlation sobre datos reales del periodo.
+  ❌ Escribir strings como "estimada", "cualitativa", "sectores
+     diferentes", "media-alta (~0.5-0.7)", o cualquier rango/etiqueta
+     que NO sea un número con 2 decimales devuelto por la tool en el
+     campo `valor` de las correlaciones del artifact.
+  ❌ Justificar la ausencia con "el skill alphavantage no fue invocado"
+     sin haber probado el fallback yfinance ni etoro get_candles.
+  ❌ Pasar a calculate_portfolio_risk_score una correlation_matrix con
+     valores inventados o estimados — corrompe R6 downstream.
 
-Prohibido: usar correlaciones precalculadas o pares "conocidos" que no
-provengan de calculate_correlation sobre datos reales del periodo.
+Si todas las fuentes fallan para un par y el par es central a la tesis
+(p.ej. los dos únicos activos direccionales del plan), el plan NO se
+entrega como está: se sustituye una de las dos posiciones por un activo
+de la misma clase con cobertura de tools confirmada, o se pide al
+usuario un ticker alternativo. Entregar un plan con el par central sin
+correlación medida convierte R6 en ficción.
 ```
 
 ### R6: Risk score del portafolio (ajustado por correlación)

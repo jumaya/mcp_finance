@@ -149,7 +149,9 @@ const data = {
     //   asignacion_usd: 0, asignacion_pct: 0,
     //   precio_entrada: 0, fuente_precio: "yfinance",
     //   tesis: "...", catalizador: "...", catalizador_fecha: "DD-MM-AAAA",
-    //   risk_score: 0, // 1-10
+    //   risk_score: 0,                    // ← decimal de calculate_risk_score (B15). Enteros redondos = juicio = FAIL.
+    //   risk_score_componentes: "...",    // ← desglose devuelto por la tool: vol_componente, drawdown_componente, liquidez_componente, leverage_componente. Sin esto B15 falla.
+    //   risk_score_real: 0,               // ← OPCIONAL: overlay del agente por evento binario. Si se usa, ambos valores aparecen y la diferencia se justifica con catalizador concreto + fecha. NO reemplaza risk_score (de la tool).
     //   setup_tecnico: { // null si no aplica (lending/staking/copy)
     //     postura: "BULLISH|NEUTRAL|BEARISH|NO_CLARO",
     //     patron: "...",
@@ -178,7 +180,15 @@ const data = {
   // Tab 4
   stress_test: { moderado: { drop_pct: -20, monto_resultante_usd: 0 }, severo: { drop_pct: -40, monto_resultante_usd: 0 } },
   correlaciones: [
-    // { par: "VOO/QQQ", valor: 0.85, lectura: "alta correlación, considerar diversificar" }
+    // OBLIGATORIO: { par: "VOO/QQQ", valor: 0.85, lectura: "alta correlación, considerar diversificar" }
+    // El campo `valor` es número con 2 decimales — salida directa de calculate_correlation.
+    // Strings tipo "estimada", "cualitativa", "(~0.5)" están PROHIBIDOS (B7 falla).
+    // Si la cadena alphavantage → yfinance → etoro get_candles falló para un par,
+    // ese par se OMITE del array y se documenta una sola vez en `correlaciones_omitidas`.
+  ],
+  correlaciones_omitidas: [
+    // { par: "X/Y", motivo: "ningún proveedor cubre ticker Z con 30 closes diarios" }
+    // Vacío [] si todos los pares se midieron.
   ],
   validaciones: [
     // { check: "concentración ≤ 50%", resultado: true, detalle: "..." }
@@ -197,6 +207,31 @@ const data = {
     // schema completo de tracking_skill.md §Schema del BASELINE DE SEGUIMIENTO
     // todos los campos llenos con cálculos reales — nunca null si la tool entregó dato
   },
+  // ───────── B16: Self-audit obligatorio ─────────
+  // Cada llamada a tool ejecutada en la sesión va aquí. La sección
+  // "Trazabilidad de tools" del Tab 4 renderiza este array. Si está
+  // vacío o le falta evidencia (campo `valor_clave`), B16 falla.
+  // Plan estándar de 2-3 posiciones direccionales: mínimo 8 entradas.
+  tool_calls_realizadas: [
+    // {
+    //   tool: "etoro-server.get_portfolio",
+    //   proposito: "Leer posiciones existentes y cash libre",
+    //   valor_clave: "1 posición abierta: QQQ 0.097 units @ $557.68; credit=$0",
+    //   status: "OK"  // OK | ERROR
+    // },
+    // {
+    //   tool: "investment-calculators.calculate_correlation",
+    //   proposito: "Correlación NBIS/RKLB con 30 closes daily",
+    //   valor_clave: "0.48 (62 closes vía yfinance, alphavantage no cubrió NBIS)",
+    //   status: "OK"
+    // },
+    // {
+    //   tool: "alphavantage.TIME_SERIES_DAILY",
+    //   proposito: "Closes 30d para NBIS (correlación)",
+    //   valor_clave: "ERROR: symbol not covered, fallback a yfinance",
+    //   status: "ERROR"
+    // },
+  ],
 };
 
 const TABS = [
@@ -272,10 +307,48 @@ function TabEscenarios({ d }) {
 }
 
 function TabRiesgo({ d }) {
-  // Render: stress test (2 cards moderado/severo con monto en grande),
-  // tabla de correlaciones (con lectura por par), lista de validaciones (✓/✗),
-  // triggers de salida (tabla), costos_totales (3 cards), disclaimers (lista numerada),
-  // BLOQUE BASELINE: <pre> + botón copiar (componente CopyBaselineButton)
+  // Render del Tab 4 — orden obligatorio:
+  //   1. Stress test (2 cards moderado/severo con monto en grande)
+  //   2. Tabla de correlaciones (con lectura por par; valor numérico siempre)
+  //      + nota de correlaciones_omitidas si hay pares sin cobertura de tool
+  //   3. Lista de validaciones (✓/✗) — incluye R1-R6, mínimos venue, gate eToro
+  //   4. Triggers de salida (tabla)
+  //   5. Costos_totales (3 cards)
+  //   6. Disclaimers (lista numerada)
+  //   7. BLOQUE BASELINE: <pre> + botón copiar (componente CopyBaselineButton)
+  //   8. Trazabilidad de tools — OBLIGATORIO, B16:
+  //      tabla con columnas: Tool, Propósito, Valor clave devuelto, Status
+  //      filas vienen de d.tool_calls_realizadas
+  //      filas con status="ERROR" en color rose; "OK" en slate.
+  //      Si el array está vacío, B16 falla — no entregar el plan.
+  // Ejemplo de la sección 8:
+  //   <section className="mt-8 border-t border-slate-800 pt-6">
+  //     <h3 className="text-rose-400 font-semibold text-sm uppercase tracking-wide mb-3">
+  //       Trazabilidad de tools (auditoría)
+  //     </h3>
+  //     <p className="text-xs text-slate-500 mb-3">
+  //       Cada llamada ejecutada en esta sesión, en orden cronológico.
+  //       Errores incluidos para evidencia de fallback.
+  //     </p>
+  //     <table className="w-full text-xs">
+  //       <thead><tr className="text-left text-slate-400 border-b border-slate-800">
+  //         <th className="py-2">Tool</th><th>Propósito</th>
+  //         <th>Valor clave</th><th>Status</th>
+  //       </tr></thead>
+  //       <tbody>
+  //         {d.tool_calls_realizadas.map((c, i) => (
+  //           <tr key={i} className="border-b border-slate-800/50">
+  //             <td className="py-1.5 font-mono text-slate-300">{c.tool}</td>
+  //             <td className="text-slate-400">{c.proposito}</td>
+  //             <td className="text-slate-300">{c.valor_clave}</td>
+  //             <td className={c.status === "ERROR" ? "text-rose-400" : "text-emerald-400"}>
+  //               {c.status}
+  //             </td>
+  //           </tr>
+  //         ))}
+  //       </tbody>
+  //     </table>
+  //   </section>
 }
 
 export default function InvestmentPlan() {
@@ -427,12 +500,15 @@ Checklist de calidad (verificar ANTES de generar el artifact JSX)
 □ ¿Tesis específica por posición (no genérica)?
 □ ¿Catalizador con fecha por posición?
 □ ¿SL y TP por posición direccional?
-□ ¿Risk score como NÚMERO visible X.X/10 (no solo barra)?
+□ ¿Risk score como NÚMERO visible X.X/10 (no solo barra)? **Y con DECIMAL — la tool calculate_risk_score nunca devuelve enteros redondos. Si el plan tiene `{5, 6, 7}`, no corriste la tool. (B15)**
+□ ¿Cada posición tiene `risk_score_componentes` con el desglose devuelto por la tool (vol, drawdown, liquidez, leverage)? Sin desglose B15 falla.
 □ ¿Escenarios con % y $ en texto visible?
 □ ¿Overnight fees en posiciones CFD?
 □ ¿Stress test con escenarios diferenciados (verticales correctos)?
 □ ¿Copy trading incluido como posición (si eToro)?
-□ ¿Correlación calculada?
+□ ¿Correlación calculada con NÚMERO con 2 decimales en `data.correlaciones[].valor` (no strings "estimada", "cualitativa", "(~0.5)")? Si algún par no tuvo cobertura por ninguna fuente (alphavantage → yfinance → etoro get_candles), está en `correlaciones_omitidas` con motivo, no inventado. (B7)
+□ ¿`data.tool_calls_realizadas` tiene mínimo 8 entradas para un plan de 2-3 posiciones direccionales, cada una con `valor_clave` no vacío? (B16)
+□ ¿Tab 4 renderiza la sección "Trazabilidad de tools" con la tabla? (B16)
 □ ¿Tramo de capital y perfil de riesgo identificados explícitamente en Tab 3?
 □ ¿Rendimiento base ≥ mínimo del tramo correcto (capital + riesgo)?
 □ ¿Si base < mínimo del tramo superior, se aclara que es por el capital, NO por riesgo del plan?
