@@ -270,8 +270,11 @@ POR CADA token candidato (proveniente del descubrimiento dinámico):
 Validar en el primer resultado cuyo symbol coincida:
 
   ✅ instrumentType == "Crypto"
-  ✅ isCurrentlyTradable == true
   ✅ isBuyEnabled == true
+
+Nota: NO se valida isCurrentlyTradable. Cripto opera 24/7 pero eToro
+puede tener ventanas de mantenimiento; eso no descarta el token, solo
+implica esperar para ejecutar la orden.
 
 Si falla:
   → el token NO se puede comprar en eToro desde esta cuenta

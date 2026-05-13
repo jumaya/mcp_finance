@@ -28,8 +28,11 @@ POR CADA par/CFD que se vaya a operar EN eToro:
 Validar en el primer resultado cuyo symbol coincida:
 
   ✅ instrumentType ∈ {"Currencies", "Commodities"}
-  ✅ isCurrentlyTradable == true
   ✅ isBuyEnabled == true   (o validar según dirección de la operación)
+
+Nota: NO se valida isCurrentlyTradable. Forex es 24/5 y puede estar
+fuera de sesión activa; el par sigue siendo válido y se opera vía
+orden pendiente.
 
 Si falla:
   → par NO operable en eToro para esta cuenta

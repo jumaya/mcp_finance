@@ -557,16 +557,19 @@ Validar en el primer resultado cuyo internalSymbolFull coincida
 (case-insensitive) con el ticker buscado:
 
   ✅ instrumentType ∈ {"Stocks", "Etf"}    → tipo correcto
-  ✅ isCurrentlyTradable == true           → mercado operable ahora
   ✅ isBuyEnabled == true                  → se puede abrir long
 
-Si las 3 pasan:
+Nota: NO se valida isCurrentlyTradable. Si el mercado está cerrado por
+horario, el ticker sigue siendo válido y se opera vía orden pendiente
+que se ejecutará al abrir.
+
+Si las 2 pasan:
   → guardar instrumentId para get_rates / get_candles posteriores
   → continuar al resto del protocolo
 
 Si alguna falla (o el ticker no aparece en results):
   → DESCARTAR el ticker para esta sesión
-  → registrar el motivo: "not_listed" | "not_tradable" | "buy_disabled" | "wrong_type"
+  → registrar el motivo: "not_listed" | "buy_disabled" | "wrong_type"
   → NO buscar reemplazo "a ojo": el reemplazo sale de la lista de
     candidatos que ya devolvió el screener (siguiente ticker con perfil
     similar en sector y volatilidad). Si se agota la lista de candidatos
