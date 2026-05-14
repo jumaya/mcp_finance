@@ -65,13 +65,15 @@ Antes de cualquier cálculo o tool, el agente debe conocer:
   Residencia fiscal: asumir Colombia salvo que diga lo contrario.
 Si falta algo crítico, pregunta una sola cosa por mensaje — no bombardees con cuestionarios.
 
-Fase 2 — Verificar contexto existente
-Si el usuario ya tiene cuenta conectada al MCP de eToro: llama get_portfolio PRIMERO. Esto te da:
-  credit — cuánto cash libre tiene.
-  positions — qué tiene ya abierto (no repetir exposición).
-  mirrors — a quiénes ya está copiando.
-  unrealizedPnL — cómo va el portfolio actual.
-Si no tiene cuenta o es un plan teórico, saltar a la Fase 3.
+Fase 2 — Verificar contexto existente (BLOQUEANTE si eToro está conectado)
+Si `etoro-server` aparece en las tools cargadas (es decir, la cuenta del usuario está conectada al MCP), `etoro-server.get_portfolio` es el **PRIMER tool call obligatorio del turno**, independientemente del tipo de pedido (plan nuevo, seguimiento, consulta puntual, copy trading). No `yfinance_get_ticker_info`, no `web_search`, no `search_mcp_registry`, no `tradingview.screen_*`. Razones:
+  credit — cuánto cash libre tiene (define el capital REAL disponible, no el que dijo el usuario).
+  positions — qué tiene ya abierto (no duplicar exposición, no recomendar tickers que ya posee).
+  mirrors — a quiénes ya está copiando (no recomendar copiar a alguien que ya copia).
+  unrealizedPnL — cómo va el portfolio actual (contexto para nuevas posiciones).
+Si `get_portfolio` falla (timeout, 401, 403, lista vacía con error), decirlo explícito al usuario y pedirle los datos críticos antes de continuar — NUNCA seguir el plan asumiendo "portfolio vacío" sin confirmar.
+Excepción única: si el propio usuario aclara explícitamente "es una cuenta nueva sin posiciones" o "ignora mi portfolio actual, dame un plan teórico", entonces se puede saltar — pero hay que registrarlo en la respuesta ("Plan generado sin consultar portfolio actual a tu pedido").
+Si el usuario NO tiene cuenta eToro conectada (etoro-server ausente de las tools), saltar a la Fase 3.
 
 Fase 2.5 — Pre-validar universo de activos en eToro
 Si el plan va a proponer operar en eToro (Fase 5 producirá tickers concretos), corre un batch de search_instruments sobre los candidatos tentativos ANTES de entrar al skill vertical y empezar a gastar llamadas en Alpha Vantage / Yahoo / TradingView / CoinGecko. Objetivo: filtrar de entrada los tickers que no pasan el gate (isBuyEnabled, instrumentType). Los que fallan se sustituyen por equivalentes del mismo sector/perfil de volatilidad antes de seguir. El horario de mercado NO es motivo de descarte: un ticker válido pero con mercado cerrado pasa el gate y se opera vía orden pendiente. Esto ahorra tool calls y evita presentar al usuario activos que después se descartan.
@@ -297,7 +299,9 @@ La verificación se hace en DOS pasadas. La primera es bloqueante: si algo falla
 BLOQUE BLOQUEANTE — si alguno falla, NO envíes, REESCRIBE
 ═══════════════════════════════════════════════════════════════
 
-Estos 17 chequeos tocan la integridad del análisis y la entrega. Un fallo aquí significa que el plan está mal o entregado en el medio incorrecto, no que está mal presentado en detalles cosméticos.
+Estos chequeos tocan la integridad del análisis y la entrega. Un fallo aquí significa que el plan está mal o entregado en el medio incorrecto, no que está mal presentado en detalles cosméticos.
+
+  [B0] PORTFOLIO CONSULTADO. Si `etoro-server` está en las tools cargadas, el PRIMER tool call del turno fue `etoro-server.get_portfolio`. Aplica a TODA sesión (planes nuevos, tracking, copy trading, consultas puntuales), no solo a Modo B de tracking. Único caso de exención: el usuario pidió explícitamente ignorar el portfolio actual (y eso quedó registrado en la respuesta). Si el plan recomienda un ticker que el usuario YA tiene en `positions[]`, o sugiere copiar a alguien que ya está en `mirrors[]`, o asume un capital distinto al `credit` real sin justificarlo — es FAIL y se reescribe. Si `get_portfolio` falló técnicamente, la respuesta lo dice y pide datos al usuario; no se rellena con asunciones.
 
   [B1] GATE eTORO. Todo ticker que el plan sitúe en eToro pasó search_instruments y cumple isBuyEnabled + instrumentType correcto. Los que no pasaron fueron sustituidos por equivalentes, no ocultados. Mercado cerrado por horario NO descarta el ticker: se mantiene y se opera vía orden pendiente.
 

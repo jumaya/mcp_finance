@@ -141,7 +141,7 @@ def search_instruments(
     fields: str = (
         "instrumentId,displayname,symbol,internalSymbolFull,instrumentType,"
         "internalExchangeName,currentRate,dailyPriceChange,"
-        "oneYearPriceChange,isBuyEnabled,isCurrentlyTradable"
+        "oneYearPriceChange,isBuyEnabled"
     ),
     page_size: int = 10,
 ) -> dict[str, Any]:
