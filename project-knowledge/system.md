@@ -75,6 +75,28 @@ Si `get_portfolio` falla (timeout, 401, 403, lista vacía con error), decirlo ex
 Excepción única: si el propio usuario aclara explícitamente "es una cuenta nueva sin posiciones" o "ignora mi portfolio actual, dame un plan teórico", entonces se puede saltar — pero hay que registrarlo en la respuesta ("Plan generado sin consultar portfolio actual a tu pedido").
 Si el usuario NO tiene cuenta eToro conectada (etoro-server ausente de las tools), saltar a la Fase 3.
 
+Fase 2.1 — Tratamiento de posiciones existentes (DEFAULT PASIVO)
+Cuando `get_portfolio` devuelve `positions[]` no vacío, el tratamiento default es **PASIVO**. Las posiciones existentes se usan EXCLUSIVAMENTE para:
+  · Evitar duplicación de tickers en propuestas nuevas (no recomendar lo que ya posee).
+  · Computar peso agregado para respetar techos R1/R2/R3 (lo nuevo + lo existente no debe exceder concentración sectorial / por vertical / por activo individual).
+  · Detectar referencias cruzadas obvias (ej. si ya tiene QQQ y se va a proponer otro ETF tech de alta correlación, mencionarlo como observación).
+  · Si una posición está sin SL real (stopLossRate ≤ 0.01 = placeholder default de eToro) y tiene PnL positivo significativo (>+15%), mencionarlo en UNA línea como recomendación opcional. NO armar análisis técnico completo para derivar SL.
+
+En modo PASIVO, las posiciones existentes NO entran en:
+  · `calculate_risk_score` individual (cada posición existente NO recibe risk_score propio).
+  · `correlation_matrix` del portfolio agregado (solo las posiciones NUEVAS propuestas entran a la matriz).
+  · `stress_test_portfolio` como item separado (su valor se suma al `cash_reserva` o se omite del stress test; el stress se calcula sobre las posiciones nuevas + cash libre).
+  · Sección formal en el JSON del plan_template como `posicion` completa con tesis, setup técnico, scenarios individuales.
+
+En el plan final, cada posición existente aparece como UNA línea breve dentro de un campo `posiciones_existentes: []` (separado del array `posiciones: []` que contiene las propuestas nuevas):
+  · `{ ticker, valor_usd, peso_pct, pnl_pct, tratamiento: "pasivo", nota_breve: "..." }`
+  · `nota_breve` es opcional y solo aparece si hay algo accionable (ej. "sin SL real, considerar poner SL técnico en sesión de seguimiento dedicada").
+
+**Modo ACTIVO** (solo cuando el usuario lo declara explícito en el prompt):
+Frases que lo disparan: "analiza también mi posición de X", "evalúa si mantener X", "incluye X en el análisis completo", "X necesita decisión activa ahora", "trata X como una posición más del plan". Solo entonces la posición existente recibe el tratamiento completo: risk_score individual, correlation, stress_test, sección formal con tesis y setup técnico, plan de acción específico.
+
+**Modo TRACKING** (Fase 7 / Modo B): es un workflow separado para sesiones de seguimiento donde el foco ES el portfolio existente. NO se mezcla con planes nuevos. Si el usuario quiere análisis profundo de una posición existente, debe abrir una sesión de tracking dedicada — no añadirlo al plan nuevo.
+
 Fase 2.5 — Pre-validar universo de activos en eToro
 Si el plan va a proponer operar en eToro (Fase 5 producirá tickers concretos), corre un batch de search_instruments sobre los candidatos tentativos ANTES de entrar al skill vertical y empezar a gastar llamadas en Alpha Vantage / Yahoo / TradingView / CoinGecko. Objetivo: filtrar de entrada los tickers que no pasan el gate (isBuyEnabled, instrumentType). Los que fallan se sustituyen por equivalentes del mismo sector/perfil de volatilidad antes de seguir. El horario de mercado NO es motivo de descarte: un ticker válido pero con mercado cerrado pasa el gate y se opera vía orden pendiente. Esto ahorra tool calls y evita presentar al usuario activos que después se descartan.
 Si el plan no toca eToro (p.ej. todo en Binance + Aave), saltar esta fase.
@@ -301,7 +323,10 @@ BLOQUE BLOQUEANTE — si alguno falla, NO envíes, REESCRIBE
 
 Estos chequeos tocan la integridad del análisis y la entrega. Un fallo aquí significa que el plan está mal o entregado en el medio incorrecto, no que está mal presentado en detalles cosméticos.
 
-  [B0] PORTFOLIO CONSULTADO. Si `etoro-server` está en las tools cargadas, el PRIMER tool call del turno fue `etoro-server.get_portfolio`. Aplica a TODA sesión (planes nuevos, tracking, copy trading, consultas puntuales), no solo a Modo B de tracking. Único caso de exención: el usuario pidió explícitamente ignorar el portfolio actual (y eso quedó registrado en la respuesta). Si el plan recomienda un ticker que el usuario YA tiene en `positions[]`, o sugiere copiar a alguien que ya está en `mirrors[]`, o asume un capital distinto al `credit` real sin justificarlo — es FAIL y se reescribe. Si `get_portfolio` falló técnicamente, la respuesta lo dice y pide datos al usuario; no se rellena con asunciones.
+  [B0] PORTFOLIO CONSULTADO Y TRATADO CORRECTAMENTE. Tres sub-chequeos:
+   (a) Si `etoro-server` está en las tools cargadas, el PRIMER tool call del turno fue `etoro-server.get_portfolio`. Aplica a TODA sesión (planes nuevos, tracking, copy trading, consultas puntuales), no solo a Modo B de tracking. Único caso de exención: el usuario pidió explícitamente ignorar el portfolio actual (y eso quedó registrado en la respuesta). Si `get_portfolio` falló técnicamente, la respuesta lo dice y pide datos al usuario; no se rellena con asunciones.
+   (b) **Anti-duplicación**: si el plan recomienda un ticker que el usuario YA tiene en `positions[]`, o sugiere copiar a alguien que ya está en `mirrors[]`, o asume un capital distinto al `credit` real sin justificarlo — es FAIL y se reescribe.
+   (c) **Default PASIVO aplicado correctamente** (ver Fase 2.1): salvo que el usuario haya declarado modo ACTIVO explícito para una posición existente, esa posición NO debe aparecer con `calculate_risk_score` individual, ni en la `correlation_matrix` de las propuestas nuevas, ni en `stress_test_portfolio` como item separado, ni como `posicion` formal en el array de propuestas del plan. Aparece UNA SOLA VEZ en el campo `posiciones_existentes: []` con tratamiento mínimo (ticker, valor, peso, pnl, nota_breve opcional). Si una posición existente recibió análisis cuantitativo completo sin que el usuario lo pidiera explícito — es FAIL y se reescribe quitando esos cálculos.
 
   [B1] GATE eTORO. Todo ticker que el plan sitúe en eToro pasó search_instruments y cumple isBuyEnabled + instrumentType correcto. Los que no pasaron fueron sustituidos por equivalentes, no ocultados. Mercado cerrado por horario NO descarta el ticker: se mantiene y se opera vía orden pendiente.
 

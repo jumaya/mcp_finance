@@ -184,7 +184,28 @@ const data = {
   copy_trading: [
     // { username: "...", roi_12m_pct: 0, risk_score: 0, dd_max_pct: 0, copiers: 0, asignacion_usd: 0 }
   ],
+  posiciones_existentes: [
+    // Posiciones ya abiertas del portfolio actual del usuario. Tratamiento PASIVO
+    // por default (ver system.md Fase 2.1). UNA línea por posición, sin
+    // risk_score individual, sin setup técnico, sin scenarios.
+    //
+    // Solo se mueven al array `posiciones` de abajo si el usuario declara
+    // modo ACTIVO explícito para esa posición específica.
+    //
+    // {
+    //   ticker: "...",
+    //   valor_usd: 0,
+    //   peso_pct_portfolio_total: 0,
+    //   pnl_pct: 0,
+    //   tratamiento: "pasivo",
+    //   nota_breve: "..."   // opcional. Solo si hay algo accionable
+    //                       // (ej. "sin SL real, considerar SL técnico
+    //                       // en sesión de seguimiento dedicada")
+    // }
+  ],
   posiciones: [
+    // Propuestas NUEVAS del plan. NO incluir aquí posiciones existentes
+    // salvo modo ACTIVO declarado por el usuario.
     // {
     //   ticker: "...", nombre: "...", venue: "eToro",
     //   tipo: "spot|cfd|copy|stake|lending",
